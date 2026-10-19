@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import SearchSelect from '../components/SearchSelect'
 
 const todayDhaka = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -16,15 +17,16 @@ export default function RecordSale() {
   const [shopId, setShopId] = useState('')
   const [date, setDate] = useState(todayDhaka())
   const [lines, setLines] = useState([newLine()])
-  const [paidInput, setPaidInput] = useState(null) // null = follow total
+  const [billInput, setBillInput] = useState(null) // null = follow line prices (when all priced)
+  const [paidInput, setPaidInput] = useState(null) // null = follow bill
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
 
   useEffect(() => {
-    supabase.from('shops').select('id, name').is('deleted_at', null).order('name')
+    supabase.from('shops').select('id, name, area').is('deleted_at', null).order('name')
       .then(({ data }) => setShops(data || []))
     supabase.from('products')
-      .select('id, name, pieces_per_carton')
+      .select('id, name, pieces_per_carton, unit_buy_price, unit_mrp')
       .is('deleted_at', null).eq('status', true).order('name')
       .then(({ data }) => setProducts(data || []))
   }, [])
@@ -33,14 +35,40 @@ export default function RecordSale() {
     () => Object.fromEntries(products.map((p) => [String(p.id), p])), [products]
   )
 
+  const shopOptions = useMemo(
+    () => shops.map((s) => ({ value: s.id, label: s.area ? `${s.name} (${s.area})` : s.name })),
+    [shops]
+  )
+  const productOptions = useMemo(
+    () => products.map((p) => ({
+      value: p.id,
+      label: p.name,
+      hint: [
+        `${p.pieces_per_carton} pcs/carton`,
+        `buy ${Number(p.unit_buy_price)}/pc`,
+        `carton ${(p.pieces_per_carton * p.unit_buy_price).toFixed(2)}`,
+        p.unit_mrp != null && `MRP ${Number(p.unit_mrp)}`,
+      ].filter(Boolean).join(' · '),
+    })),
+    [products]
+  )
+
   const qtyOf = (l) => {
     const p = productById[l.productId]
     return (Number(l.cartons) || 0) * (p?.pieces_per_carton || 0) + (Number(l.pieces) || 0)
   }
 
+  const allPriced = lines.every((l) => l.price !== '')
   const totalC = lines.reduce((sum, l) => sum + qtyOf(l) * toCents(l.price), 0)
-  const paidC = paidInput === null ? totalC : toCents(paidInput)
-  const dueC = totalC - paidC
+  const costC = lines.reduce(
+    (sum, l) => sum + Math.round(qtyOf(l) * (productById[l.productId]?.unit_buy_price || 0) * 100), 0
+  )
+  const billText = billInput ?? (allPriced ? (totalC / 100).toFixed(2) : '')
+  const billC = toCents(billText)
+  const paidText = paidInput ?? billText
+  const paidC = toCents(paidText)
+  const dueC = billC - paidC
+  const profitC = billC - costC
 
   const setLine = (key, patch) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
@@ -49,8 +77,10 @@ export default function RecordSale() {
     if (!shopId) return 'Pick a shop'
     if (lines.length === 0) return 'Add at least one line'
     if (lines.some((l) => !l.productId || qtyOf(l) <= 0)) return 'Every line needs a product and quantity above 0'
-    if (lines.some((l) => l.price === '' || Number(l.price) < 0)) return 'Every line needs a sell price'
-    if (paidC < 0 || paidC > totalC) return 'Paid must be between 0 and the total'
+    if (lines.some((l) => l.price !== '' && Number(l.price) < 0)) return 'Sell price cannot be negative'
+    if (billText === '' || billC < 0) return 'Enter the bill amount'
+    if (paidText === '' || paidC < 0) return 'Enter the money collected'
+    if (paidC > billC) return 'Money collected cannot be more than the bill'
     return null
   }
 
@@ -61,18 +91,23 @@ export default function RecordSale() {
     const { error } = await supabase.rpc('create_sale', {
       p_shop_id: Number(shopId),
       p_sale_date: date,
+      p_bill_amount: billC / 100,
       p_paid_amount: paidC / 100,
       p_items: lines.map((l) => ({
         product_id: Number(l.productId),
         qty_pieces: qtyOf(l),
-        unit_sell_price: Number(l.price),
+        unit_sell_price: l.price === '' ? null : Number(l.price),
       })),
     })
     setSaving(false)
     if (error) return setMsg({ type: 'err', text: error.message })
-    setMsg({ type: 'ok', text: `Saved. Due: ${fmt(dueC)}` })
+    setMsg({
+      type: 'ok',
+      text: dueC > 0 ? `Saved. Due: ${fmt(dueC)}` : `Saved. Profit: ${fmt(profitC)}`,
+    })
     setShopId('')
     setLines([newLine()])
+    setBillInput(null)
     setPaidInput(null)
   }
 
@@ -82,24 +117,24 @@ export default function RecordSale() {
     <div className="space-y-4">
       <h1 className="text-lg font-semibold">Record sale</h1>
 
-      <select value={shopId} onChange={(e) => setShopId(e.target.value)} className={input}>
-        <option value="">Select shop</option>
-        {shops.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-      </select>
+      <SearchSelect
+        options={shopOptions}
+        value={shopId}
+        onChange={setShopId}
+        placeholder="Search shop"
+      />
       <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={input} />
 
       {lines.map((l) => {
         const p = productById[l.productId]
         return (
           <div key={l.key} className="space-y-2 rounded-lg border bg-white p-3">
-            <select
+            <SearchSelect
+              options={productOptions}
               value={l.productId}
-              onChange={(e) => setLine(l.key, { productId: e.target.value })}
-              className={input}
-            >
-              <option value="">Select product</option>
-              {products.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-            </select>
+              onChange={(v) => setLine(l.key, { productId: v })}
+              placeholder="Search product"
+            />
             <div className="grid grid-cols-3 gap-2">
               <input inputMode="numeric" placeholder="Cartons" value={l.cartons}
                 onChange={(e) => setLine(l.key, { cartons: e.target.value.replace(/\D/g, '') })}
@@ -107,13 +142,13 @@ export default function RecordSale() {
               <input inputMode="numeric" placeholder="Pieces" value={l.pieces}
                 onChange={(e) => setLine(l.key, { pieces: e.target.value.replace(/\D/g, '') })}
                 className={input} />
-              <input inputMode="decimal" placeholder="Price/pc" value={l.price}
+              <input inputMode="decimal" placeholder="Price/pc (opt.)" value={l.price}
                 onChange={(e) => setLine(l.key, { price: e.target.value })}
                 className={input} />
             </div>
             <div className="flex items-center justify-between text-sm text-gray-600">
               <span>{p ? `${qtyOf(l)} pcs` : ''}</span>
-              <span>{fmt(qtyOf(l) * toCents(l.price))}</span>
+              <span>{l.price !== '' ? fmt(qtyOf(l) * toCents(l.price)) : ''}</span>
               {lines.length > 1 && (
                 <button onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
                   className="text-red-600">Remove</button>
@@ -129,12 +164,18 @@ export default function RecordSale() {
       </button>
 
       <div className="space-y-2 rounded-lg border bg-white p-3">
-        <div className="flex justify-between font-medium"><span>Total</span><span>{fmt(totalC)}</span></div>
-        <label className="block text-sm text-gray-600">Paid</label>
-        <input inputMode="decimal" value={paidInput === null ? fmt(totalC).replace(/,/g, '') : paidInput}
+        <div className="flex justify-between text-gray-600"><span>Cost (buy)</span><span>{fmt(costC)}</span></div>
+        <label className="block text-sm text-gray-600">Bill amount (what the shop pays you)</label>
+        <input inputMode="decimal" value={billText}
+          onChange={(e) => setBillInput(e.target.value)} className={input} />
+        <label className="block text-sm text-gray-600">Money collected now</label>
+        <input inputMode="decimal" value={paidText}
           onChange={(e) => setPaidInput(e.target.value)} className={input} />
         <div className={`flex justify-between ${dueC > 0 ? 'text-red-600' : 'text-gray-600'}`}>
           <span>Due</span><span>{fmt(dueC)}</span>
+        </div>
+        <div className={`flex justify-between font-medium ${profitC < 0 ? 'text-red-600' : 'text-green-700'}`}>
+          <span>Profit</span><span>{fmt(profitC)}</span>
         </div>
       </div>
 

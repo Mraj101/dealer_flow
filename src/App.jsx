@@ -3,10 +3,16 @@ import { supabase } from './lib/supabase'
 import Login from './screens/Login'
 import RecordSale from './screens/RecordSale'
 import AddShop from './screens/AddShop'
+import Products from './screens/Products'
+import DaySummary from './screens/DaySummary'
+import Dues from './screens/Dues'
 
 const TABS = [
   { id: 'sale', label: 'Sale', Screen: RecordSale },
+  { id: 'day', label: 'Day', Screen: DaySummary },
+  { id: 'dues', label: 'Dues', Screen: Dues },
   { id: 'shop', label: 'Shops', Screen: AddShop },
+  { id: 'product', label: 'Products', Screen: Products },
 ]
 
 export default function App() {
