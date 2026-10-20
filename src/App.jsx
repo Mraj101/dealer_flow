@@ -6,11 +6,13 @@ import AddShop from './screens/AddShop'
 import Products from './screens/Products'
 import DaySummary from './screens/DaySummary'
 import Dues from './screens/Dues'
+import Stock from './screens/Stock'
 
 const TABS = [
   { id: 'sale', label: 'Sale', Screen: RecordSale },
   { id: 'day', label: 'Day', Screen: DaySummary },
   { id: 'dues', label: 'Dues', Screen: Dues },
+  { id: 'stock', label: 'Stock', Screen: Stock },
   { id: 'shop', label: 'Shops', Screen: AddShop },
   { id: 'product', label: 'Products', Screen: Products },
 ]
@@ -40,7 +42,7 @@ export default function App() {
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex-1 py-4 text-sm font-medium ${
+            className={`flex-1 py-4 text-xs font-medium ${
               tab === t.id ? 'text-blue-600' : 'text-gray-500'
             }`}
           >
@@ -49,7 +51,7 @@ export default function App() {
         ))}
         <button
           onClick={() => supabase.auth.signOut()}
-          className="flex-1 py-4 text-sm font-medium text-gray-500"
+          className="flex-1 py-4 text-xs font-medium text-gray-500"
         >
           Sign out
         </button>

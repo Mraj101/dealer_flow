@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import SearchSelect from '../components/SearchSelect'
+import { fmtQty } from '../lib/qty'
 
 const todayDhaka = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -14,6 +15,7 @@ const newLine = () => ({ key: nextKey++, productId: '', cartons: '', pieces: '',
 export default function RecordSale() {
   const [shops, setShops] = useState([])
   const [products, setProducts] = useState([])
+  const [stockById, setStockById] = useState({}) // product id -> pieces in stock
   const [shopId, setShopId] = useState('')
   const [date, setDate] = useState(todayDhaka())
   const [lines, setLines] = useState([newLine()])
@@ -29,6 +31,10 @@ export default function RecordSale() {
       .select('id, name, pieces_per_carton, unit_buy_price, unit_mrp')
       .is('deleted_at', null).eq('status', true).order('name')
       .then(({ data }) => setProducts(data || []))
+    supabase.from('product_stock').select('product_id, received_pieces, sold_pieces')
+      .then(({ data }) => setStockById(Object.fromEntries(
+        (data || []).map((s) => [s.product_id, s.received_pieces - s.sold_pieces])
+      )))
   }, [])
 
   const productById = useMemo(
@@ -44,13 +50,14 @@ export default function RecordSale() {
       value: p.id,
       label: p.name,
       hint: [
+        `stock ${fmtQty(stockById[p.id] || 0, p.pieces_per_carton)}`,
         `${p.pieces_per_carton} pcs/carton`,
         `buy ${Number(p.unit_buy_price)}/pc`,
         `carton ${(p.pieces_per_carton * p.unit_buy_price).toFixed(2)}`,
         p.unit_mrp != null && `MRP ${Number(p.unit_mrp)}`,
       ].filter(Boolean).join(' · '),
     })),
-    [products]
+    [products, stockById]
   )
 
   const qtyOf = (l) => {

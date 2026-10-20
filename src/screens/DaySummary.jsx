@@ -10,6 +10,7 @@ export default function DaySummary() {
   const [date, setDate] = useState(todayDhaka())
   const [rows, setRows] = useState([])
   const [duesIn, setDuesIn] = useState(0) // old dues collected on this date
+  const [driverIn, setDriverIn] = useState(0) // taken from drivers for missing goods
   const [shopById, setShopById] = useState({})
   const [owedNow, setOwedNow] = useState(0) // all shops, all dates, after payments
 
@@ -31,6 +32,11 @@ export default function DaySummary() {
       .eq('pay_date', date)
       .is('deleted_at', null)
       .then(({ data }) => setDuesIn((data || []).reduce((s, p) => s + Number(p.amount), 0)))
+    supabase.from('receipts')
+      .select('driver_paid')
+      .eq('receive_date', date)
+      .is('deleted_at', null)
+      .then(({ data }) => setDriverIn((data || []).reduce((s, r) => s + Number(r.driver_paid), 0)))
   }, [date])
 
   const unpriced = rows.filter((r) => r.total === null).length
@@ -45,8 +51,11 @@ export default function DaySummary() {
       <div className="space-y-1 rounded-lg border bg-white p-3">
         <div className="flex justify-between"><span>Collected from sales</span><span>{fmt(sum('paid_amount'))}</span></div>
         <div className="flex justify-between"><span>Old dues collected</span><span>{fmt(duesIn)}</span></div>
+        {driverIn > 0 && (
+          <div className="flex justify-between"><span>From driver (missing goods)</span><span>{fmt(driverIn)}</span></div>
+        )}
         <div className="flex justify-between border-t pt-1 font-medium">
-          <span>Total cash in hand</span><span>{fmt(sum('paid_amount') + duesIn)}</span>
+          <span>Total cash in hand</span><span>{fmt(sum('paid_amount') + duesIn + driverIn)}</span>
         </div>
         <div className="flex justify-between text-gray-600"><span>Cost of goods sold</span><span>{fmt(sum('cost'))}</span></div>
         <div className="flex justify-between text-gray-600"><span>Due created by today's sales</span><span>{fmt(sum('due'))}</span></div>
