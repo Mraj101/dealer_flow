@@ -141,6 +141,7 @@ export default function RecordSale() {
               value={l.productId}
               onChange={(v) => setLine(l.key, { productId: v })}
               placeholder="Search product"
+              disabledValues={lines.map((x) => x.productId).filter(Boolean)}
             />
             <div className="grid grid-cols-3 gap-2">
               <input inputMode="numeric" placeholder="Cartons" value={l.cartons}

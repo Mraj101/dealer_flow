@@ -1,7 +1,8 @@
 import { useState } from 'react'
 
 // options: [{ value, label, hint? }] (hint = small grey second line); value: selected value as string ('' = none)
-export default function SearchSelect({ options, value, onChange, placeholder }) {
+// disabledValues: values shown greyed out and not selectable (e.g. already used on another line)
+export default function SearchSelect({ options, value, onChange, placeholder, disabledValues = [] }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
 
@@ -9,7 +10,11 @@ export default function SearchSelect({ options, value, onChange, placeholder }) 
   const q = query.trim().toLowerCase()
   const shown = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options
 
+  const isDisabled = (o) =>
+    String(o.value) !== String(value) && disabledValues.some((d) => String(d) === String(o.value))
+
   const pick = (o) => {
+    if (isDisabled(o)) return
     onChange(String(o.value))
     setQuery('')
     setOpen(false)
@@ -33,11 +38,14 @@ export default function SearchSelect({ options, value, onChange, placeholder }) 
               key={o.value}
               // mousedown (not click) so it fires before the input's blur closes the list
               onMouseDown={(e) => { e.preventDefault(); pick(o) }}
-              className={`cursor-pointer p-3 hover:bg-gray-100 ${
-                String(o.value) === String(value) ? 'font-medium text-blue-600' : ''
-              }`}
+              aria-disabled={isDisabled(o)}
+              className={`p-3 ${
+                isDisabled(o)
+                  ? 'cursor-not-allowed bg-gray-50 text-gray-400'
+                  : 'cursor-pointer hover:bg-gray-100'
+              } ${String(o.value) === String(value) ? 'font-medium text-blue-600' : ''}`}
             >
-              <div>{o.label}</div>
+              <div>{o.label}{isDisabled(o) && ' · already added'}</div>
               {o.hint && <div className="text-sm font-normal text-gray-500">{o.hint}</div>}
             </li>
           ))}

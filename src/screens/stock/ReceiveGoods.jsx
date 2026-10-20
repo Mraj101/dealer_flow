@@ -128,6 +128,7 @@ export default function ReceiveGoods() {
               value={l.productId}
               onChange={(v) => setLine(l.key, { productId: v })}
               placeholder="Search product"
+              disabledValues={lines.map((x) => x.productId).filter(Boolean)}
             />
             <div className="text-sm text-gray-600">On memo</div>
             <div className="grid grid-cols-2 gap-2">
