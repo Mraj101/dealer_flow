@@ -194,6 +194,20 @@ try {
   await c.getByText('malai fun').waitFor()
   ok('first download fails -> clear message; "Try again" works once internet is back')
 
+  // ---------- the DevTools helpers for looking inside the phone's database ----------
+  const insp = await c.evaluate(() => {
+    const names = window.dealerDb.tables().map((t) => t.name)
+    const products = window.dealerDb.query('select name, unit_buy_price from products order by name')
+    let refused = false
+    try { window.dealerDb.query('delete from products') } catch { refused = true }
+    return { names, products, refused, count: window.dealerDb.query('select count(*) n from products')[0].n }
+  })
+  assert.ok(['sales', 'sale_items', 'products', 'sales_summary', 'product_stock'].every((t) => insp.names.includes(t)))
+  assert.deepEqual(insp.products, [{ name: 'cola', unit_buy_price: 180000 }, { name: 'malai fun', unit_buy_price: 75416 }])
+  assert.equal(insp.refused, true)
+  assert.equal(insp.count, 2)
+  ok('dealerDb.tables() / dealerDb.query() work in the browser; writes through it are refused')
+
   assert.deepEqual(pageErrors, [], `browser errors: ${pageErrors.join(' | ')}`)
   ok('no errors in the browser console')
   console.log('\nE2E PASSED')

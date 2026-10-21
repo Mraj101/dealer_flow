@@ -41,6 +41,10 @@ export function makeDriver(db, persistBytes) {
       saving = saving.then(() => persistBytes(db.export()))
       return saving
     },
+    // the whole database as a .sqlite file
+    exportBytes() {
+      return db.export()
+    },
     meta(key) {
       return driver.get('select value from _meta where key = ?', [key])?.value ?? null
     },

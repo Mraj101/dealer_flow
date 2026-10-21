@@ -67,11 +67,36 @@ export async function startLocal(userId) {
   })
 
   current = { userId, repo: repoImpl, syncer, driver }
+  exposeForInspection(driver)
   syncer.refresh()
   const firstSyncDone = driver.meta('initial_sync_done') === '1'
   // opened with unsent entries on the phone: send them now (the very first sync is run by the app)
   if (firstSyncDone) syncer.syncNow()
   return { firstSyncDone }
+}
+
+// Look inside the phone's database from Chrome DevTools (on the phone app: chrome://inspect).
+// Read-only helpers: dealerDb.tables(), dealerDb.query('select ...'), dealerDb.download()
+// Money columns are stored in 1/10000 units: 75416 means 7.5416.
+function exposeForInspection(driver) {
+  window.dealerDb = {
+    tables: () =>
+      driver.all("select type, name from sqlite_master where type in ('table', 'view') and name not like 'sqlite_%' order by type, name"),
+    query: (sql, params = []) => {
+      if (!/^\s*(select|with|pragma)\b/i.test(sql)) throw new Error('dealerDb.query is read-only: use select')
+      const rows = driver.all(sql, params)
+      console.table(rows)
+      return rows
+    },
+    download: () => {
+      const url = URL.createObjectURL(new Blob([driver.exportBytes()], { type: 'application/vnd.sqlite3' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'dealer-local.sqlite'
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    },
+  }
 }
 
 // The very first sync downloads the account's data. Needs internet once.
