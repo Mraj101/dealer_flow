@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { repo } from '../local'
 
 const todayDhaka = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -15,28 +15,15 @@ export default function DaySummary() {
   const [owedNow, setOwedNow] = useState(0) // all shops, all dates, after payments
 
   useEffect(() => {
-    supabase.from('shops').select('id, name, area')
-      .then(({ data }) => setShopById(Object.fromEntries((data || []).map((s) => [s.id, s]))))
-    supabase.from('shop_balances').select('balance')
-      .then(({ data }) => setOwedNow((data || []).reduce((s, b) => s + Math.max(Number(b.balance), 0), 0)))
+    setShopById(Object.fromEntries(repo.listShops({ includeDeleted: true }).map((s) => [s.id, s])))
+    setOwedNow(repo.totalOwed())
   }, [])
 
   useEffect(() => {
-    supabase.from('sales_summary')
-      .select('id, shop_id, paid_amount, cost, total, due, profit')
-      .eq('sale_date', date)
-      .order('id')
-      .then(({ data }) => setRows(data || []))
-    supabase.from('payments')
-      .select('amount')
-      .eq('pay_date', date)
-      .is('deleted_at', null)
-      .then(({ data }) => setDuesIn((data || []).reduce((s, p) => s + Number(p.amount), 0)))
-    supabase.from('receipts')
-      .select('driver_paid')
-      .eq('receive_date', date)
-      .is('deleted_at', null)
-      .then(({ data }) => setDriverIn((data || []).reduce((s, r) => s + Number(r.driver_paid), 0)))
+    setRows(repo.salesSummaryByDate(date))
+    const cash = repo.dayCash(date)
+    setDuesIn(cash.duesIn)
+    setDriverIn(cash.driverIn)
   }, [date])
 
   const unpriced = rows.filter((r) => r.total === null).length

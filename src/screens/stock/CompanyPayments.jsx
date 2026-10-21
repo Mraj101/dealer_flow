@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../../lib/supabase'
+import { repo } from '../../local'
 
 const todayDhaka = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -16,13 +16,8 @@ export default function CompanyPayments() {
   const [msg, setMsg] = useState(null)
 
   const load = () => {
-    supabase.from('company_balance').select('paid, charged, balance').single()
-      .then(({ data }) => data && setBal(data))
-    supabase.from('company_payments')
-      .select('id, pay_date, amount, note')
-      .is('deleted_at', null)
-      .order('pay_date', { ascending: false }).order('id', { ascending: false }).limit(20)
-      .then(({ data }) => setList(data || []))
+    setBal(repo.companyBalance())
+    setList(repo.listCompanyPayments(20))
   }
   useEffect(() => { load() }, [])
 
@@ -31,11 +26,13 @@ export default function CompanyPayments() {
     const n = Number(amount)
     if (!(n > 0)) return setMsg({ type: 'err', text: 'Enter an amount above 0' })
     setSaving(true)
-    const { error } = await supabase.from('company_payments').insert({
-      pay_date: date, amount: n, note: note.trim() || null,
-    })
+    try {
+      await repo.createCompanyPayment({ amount: n, note, payDate: date })
+    } catch (error) {
+      setSaving(false)
+      return setMsg({ type: 'err', text: error.message })
+    }
     setSaving(false)
-    if (error) return setMsg({ type: 'err', text: error.message })
     setAmount('')
     setNote('')
     setMsg({ type: 'ok', text: 'Payment saved' })

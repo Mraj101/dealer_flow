@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { supabase } from '../../lib/supabase'
+import { repo } from '../../local'
 import { fmtQty } from '../../lib/qty'
 import SearchSelect from '../../components/SearchSelect'
 
@@ -25,17 +25,10 @@ export default function ReceiveGoods() {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
 
-  const loadRecent = () =>
-    supabase.from('receipts_summary')
-      .select('id, receive_date, memo_no, memo_amount, driver_name, driver_paid, short_pieces, short_value')
-      .order('receive_date', { ascending: false }).order('id', { ascending: false }).limit(10)
-      .then(({ data }) => setRecent(data || []))
+  const loadRecent = () => setRecent(repo.recentReceipts(10))
 
   useEffect(() => {
-    supabase.from('products')
-      .select('id, name, pieces_per_carton, unit_buy_price')
-      .is('deleted_at', null).eq('status', true).order('name')
-      .then(({ data }) => setProducts(data || []))
+    setProducts(repo.listProducts({ activeOnly: true }))
     loadRecent()
   }, [])
 
@@ -82,21 +75,25 @@ export default function ReceiveGoods() {
     const err = validate()
     if (err) return setMsg({ type: 'err', text: err })
     setSaving(true)
-    const { error } = await supabase.rpc('create_receipt', {
-      p_receive_date: date,
-      p_memo_no: memoNo,
-      p_memo_amount: toCents(memoText) / 100,
-      p_driver_name: driver,
-      p_driver_paid: toCents(driverText) / 100,
-      p_note: null,
-      p_items: lines.map((l) => ({
-        product_id: Number(l.productId),
-        memo_qty_pieces: memoQty(l),
-        received_qty_pieces: recvQty(l),
-      })),
-    })
+    try {
+      await repo.createReceipt({
+        receiveDate: date,
+        memoNo,
+        memoAmount: toCents(memoText) / 100,
+        driverName: driver,
+        driverPaid: toCents(driverText) / 100,
+        note: null,
+        items: lines.map((l) => ({
+          productId: l.productId,
+          memoQtyPieces: memoQty(l),
+          receivedQtyPieces: recvQty(l),
+        })),
+      })
+    } catch (error) {
+      setSaving(false)
+      return setMsg({ type: 'err', text: error.message })
+    }
     setSaving(false)
-    if (error) return setMsg({ type: 'err', text: error.message })
     setMsg({ type: 'ok', text: 'Delivery saved, stock updated' })
     setMemoNo('')
     setDriver('')

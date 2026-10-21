@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { repo } from '../local'
 
 const todayDhaka = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -14,19 +14,7 @@ export default function Dues() {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
 
-  const load = async () => {
-    const [{ data: shops }, { data: bal }] = await Promise.all([
-      supabase.from('shops').select('id, name, area, phone').is('deleted_at', null),
-      supabase.from('shop_balances').select('shop_id, balance'),
-    ])
-    const balById = Object.fromEntries((bal || []).map((b) => [b.shop_id, Number(b.balance)]))
-    setRows(
-      (shops || [])
-        .map((s) => ({ ...s, balance: balById[s.id] || 0 }))
-        .filter((s) => s.balance > 0)
-        .sort((a, b) => b.balance - a.balance)
-    )
-  }
+  const load = () => setRows(repo.duesList())
   useEffect(() => { load() }, [])
 
   const open = (id) => {
@@ -40,11 +28,13 @@ export default function Dues() {
     if (!(n > 0)) return setMsg({ type: 'err', text: 'Enter an amount above 0' })
     if (n > shop.balance) return setMsg({ type: 'err', text: `Cannot be more than the due (${fmt(shop.balance)})` })
     setSaving(true)
-    const { error } = await supabase.from('payments').insert({
-      shop_id: shop.id, amount: n, pay_date: date,
-    })
+    try {
+      await repo.createPayment({ shopId: shop.id, amount: n, payDate: date })
+    } catch (error) {
+      setSaving(false)
+      return setMsg({ type: 'err', text: error.message })
+    }
     setSaving(false)
-    if (error) return setMsg({ type: 'err', text: error.message })
     setMsg({ type: 'ok', text: `Collected ${fmt(n)} from ${shop.name}` })
     setOpenId(null)
     setAmount('')

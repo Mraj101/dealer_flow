@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { repo } from '../local'
 
 const empty = { name: '', perCarton: '', buyPrice: '', mrp: '' }
 
@@ -10,14 +10,7 @@ export default function Products() {
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState(null)
 
-  const load = async () => {
-    const { data } = await supabase
-      .from('products')
-      .select('id, name, pieces_per_carton, unit_buy_price, unit_mrp')
-      .is('deleted_at', null)
-      .order('name')
-    setProducts(data || [])
-  }
+  const load = () => setProducts(repo.listProducts())
   useEffect(() => { load() }, [])
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }))
@@ -32,17 +25,19 @@ export default function Products() {
     if (form.buyPrice === '' || buyPrice < 0) return setMsg({ type: 'err', text: 'Enter the buy price per piece' })
     if (form.mrp !== '' && Number(form.mrp) < 0) return setMsg({ type: 'err', text: 'MRP cannot be negative' })
     setSaving(true)
-    const row = {
-      name,
-      pieces_per_carton: perCarton,
-      unit_buy_price: buyPrice,
-      unit_mrp: form.mrp === '' ? null : Number(form.mrp),
+    try {
+      await repo.saveProduct({
+        id: editingId,
+        name,
+        pieces_per_carton: perCarton,
+        unit_buy_price: form.buyPrice,
+        unit_mrp: form.mrp === '' ? null : form.mrp,
+      })
+    } catch (error) {
+      setSaving(false)
+      return setMsg({ type: 'err', text: error.message })
     }
-    const { error } = editingId
-      ? await supabase.from('products').update(row).eq('id', editingId)
-      : await supabase.from('products').insert(row)
     setSaving(false)
-    if (error) return setMsg({ type: 'err', text: error.message })
     setMsg({ type: 'ok', text: editingId ? 'Product updated' : 'Product added' })
     cancelEdit()
     load()
@@ -68,11 +63,11 @@ export default function Products() {
   // soft delete: past sales keep their copied buy price
   const remove = async (p) => {
     if (!window.confirm(`Delete "${p.name}"? Past sales are not affected.`)) return
-    const { error } = await supabase
-      .from('products')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', p.id)
-    if (error) return setMsg({ type: 'err', text: error.message })
+    try {
+      await repo.deleteProduct(p.id)
+    } catch (error) {
+      return setMsg({ type: 'err', text: error.message })
+    }
     if (editingId === p.id) cancelEdit()
     setMsg({ type: 'ok', text: 'Product deleted' })
     load()

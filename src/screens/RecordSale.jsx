@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { repo } from '../local'
 import SearchSelect from '../components/SearchSelect'
 import { fmtQty } from '../lib/qty'
 
@@ -24,17 +24,15 @@ export default function RecordSale() {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
 
+  const loadStock = () =>
+    setStockById(Object.fromEntries(
+      repo.productStock().map((s) => [s.product_id, s.received_pieces - s.sold_pieces])
+    ))
+
   useEffect(() => {
-    supabase.from('shops').select('id, name, area').is('deleted_at', null).order('name')
-      .then(({ data }) => setShops(data || []))
-    supabase.from('products')
-      .select('id, name, pieces_per_carton, unit_buy_price, unit_mrp')
-      .is('deleted_at', null).eq('status', true).order('name')
-      .then(({ data }) => setProducts(data || []))
-    supabase.from('product_stock').select('product_id, received_pieces, sold_pieces')
-      .then(({ data }) => setStockById(Object.fromEntries(
-        (data || []).map((s) => [s.product_id, s.received_pieces - s.sold_pieces])
-      )))
+    setShops(repo.listShops())
+    setProducts(repo.listProducts({ activeOnly: true }))
+    loadStock()
   }, [])
 
   const productById = useMemo(
@@ -95,19 +93,24 @@ export default function RecordSale() {
     const err = validate()
     if (err) return setMsg({ type: 'err', text: err })
     setSaving(true)
-    const { error } = await supabase.rpc('create_sale', {
-      p_shop_id: Number(shopId),
-      p_sale_date: date,
-      p_bill_amount: billC / 100,
-      p_paid_amount: paidC / 100,
-      p_items: lines.map((l) => ({
-        product_id: Number(l.productId),
-        qty_pieces: qtyOf(l),
-        unit_sell_price: l.price === '' ? null : Number(l.price),
-      })),
-    })
+    try {
+      await repo.createSale({
+        shopId,
+        saleDate: date,
+        billAmount: billC / 100,
+        paidAmount: paidC / 100,
+        items: lines.map((l) => ({
+          productId: l.productId,
+          qtyPieces: qtyOf(l),
+          unitSellPrice: l.price === '' ? null : l.price,
+        })),
+      })
+    } catch (error) {
+      setSaving(false)
+      return setMsg({ type: 'err', text: error.message })
+    }
     setSaving(false)
-    if (error) return setMsg({ type: 'err', text: error.message })
+    loadStock()
     setMsg({
       type: 'ok',
       text: dueC > 0 ? `Saved. Due: ${fmt(dueC)}` : `Saved. Profit: ${fmt(profitC)}`,

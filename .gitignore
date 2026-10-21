@@ -1,14 +1,28 @@
 # dependencies
 node_modules
+.pnpm-store
 
 # build output
 dist
+dist-ssr
 build
 
-# env files (keep .env.example)
+# env files and secrets (keep .env.example)
 .env
 .env.*
 !.env.example
+*.pem
+
+# Android app signing keys: never publish these (a leaked release key lets anyone ship "your" app)
+# The android/ folder has its own .gitignore for build output, local.properties and copied web files.
+*.jks
+*.keystore
+key.properties
+keystore.properties
+
+# built apps
+*.apk
+*.aab
 
 # logs
 *.log
@@ -23,7 +37,22 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
-# misc
+# caches and test output
 coverage
 .vite
+.eslintcache
+*.tsbuildinfo
+playwright-report
+test-results
 *.local
+
+# Supabase CLI working files
+supabase/.temp
+supabase/.branches
+
+# local database files
+*.sqlite
+*.sqlite3
+
+# Claude Code: personal settings stay local
+.claude/settings.local.json

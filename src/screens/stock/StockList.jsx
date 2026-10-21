@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../../lib/supabase'
+import { repo } from '../../local'
 import { fmtQty } from '../../lib/qty'
 
 const fmt = (v) =>
@@ -10,19 +10,13 @@ export default function StockList() {
   const [q, setQ] = useState('')
 
   useEffect(() => {
-    Promise.all([
-      supabase.from('products')
-        .select('id, name, pieces_per_carton, unit_buy_price')
-        .is('deleted_at', null).order('name'),
-      supabase.from('product_stock').select('product_id, received_pieces, sold_pieces'),
-    ]).then(([{ data: products }, { data: stock }]) => {
-      const byId = Object.fromEntries((stock || []).map((s) => [s.product_id, s]))
-      setRows((products || []).map((p) => {
-        const s = byId[p.id] || { received_pieces: 0, sold_pieces: 0 }
-        const pieces = s.received_pieces - s.sold_pieces
-        return { ...p, ...s, pieces, value: pieces * p.unit_buy_price }
-      }))
-    })
+    const products = repo.listProducts()
+    const byId = Object.fromEntries(repo.productStock().map((s) => [s.product_id, s]))
+    setRows(products.map((p) => {
+      const s = byId[p.id] || { received_pieces: 0, sold_pieces: 0 }
+      const pieces = s.received_pieces - s.sold_pieces
+      return { ...p, ...s, pieces, value: pieces * p.unit_buy_price }
+    }))
   }, [])
 
   const shown = q.trim()

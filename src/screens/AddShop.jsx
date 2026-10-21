@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { repo } from '../local'
 
 const empty = { name: '', area: '', phone: '' }
 
@@ -9,36 +9,21 @@ export default function AddShop() {
   const [msg, setMsg] = useState(null) // { type: 'ok' | 'err', text }
   const [saving, setSaving] = useState(false)
 
-  const load = async () => {
-    const { data } = await supabase
-      .from('shops')
-      .select('id, name, area, phone')
-      .is('deleted_at', null)
-      .order('area', { nullsFirst: false })
-      .order('name')
-    setShops(data || [])
-  }
+  const load = () => setShops(repo.listShops({ sort: 'area' }))
   useEffect(() => { load() }, [])
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }))
 
   const save = async (e) => {
     e.preventDefault()
-    const name = form.name.trim()
-    if (!name) return setMsg({ type: 'err', text: 'Enter a shop name' })
     setSaving(true)
-    const { error } = await supabase.from('shops').insert({
-      name,
-      area: form.area.trim() || null,
-      phone: form.phone.trim() || null,
-    })
-    setSaving(false)
-    if (error) {
-      return setMsg({
-        type: 'err',
-        text: error.code === '23505' ? 'This shop already exists in this area' : error.message,
-      })
+    try {
+      await repo.addShop({ name: form.name, area: form.area, phone: form.phone })
+    } catch (error) {
+      setSaving(false)
+      return setMsg({ type: 'err', text: error.message })
     }
+    setSaving(false)
     setForm(empty)
     setMsg({ type: 'ok', text: 'Shop added' })
     load()
