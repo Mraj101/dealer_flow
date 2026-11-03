@@ -172,7 +172,7 @@ try {
   await b.getByRole('button', { name: /Alauddin/ }).click()
   await card.getByText('Due from this sale').waitFor() // the details slide open
   const details = await card.innerText()
-  assert.match(details, /cola\s+1 ctn\s+432\.00/)     // 24 pcs x 18
+  assert.match(details, /cola\s+24 pcs\/ctn · buy 18\/pc\s+1 ctn\s+432\.00/)     // 24 pcs x 18
   assert.match(details, /Bill\s*600\.00/)
   // the 200 due was collected later on phone A (Dues > Collect), so this old sale shows it as paid
   assert.match(details, /Paid later ✓/)
@@ -181,7 +181,7 @@ try {
   assert.match(details, /Still due\s*0\.00/)
   assert.match(await b.locator('body').innerText(), /Still unpaid\s*0\.00/)
   await b.getByRole('tab', { name: /Products/ }).click()
-  assert.match(await b.locator('table').innerText(), /cola\s+1 shop\s+1 ctn\s+432\.00/)
+  assert.match(await b.locator('table').innerText(), /cola\s+24 pcs\/ctn · 18\/pc\s+1 shop\s+1 ctn\s+432\.00/)
   ok('Day screen: items (cola · 1 ctn, cost 432.00); a due collected later shows as paid, not still due')
 
   // ---------- expired login, no internet: the app still opens ----------

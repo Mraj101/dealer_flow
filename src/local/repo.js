@@ -324,6 +324,7 @@ export function createRepo(driver) {
       for (const r of rows) {
         ;(bySale[r.sale_id] ??= []).push({
           id: r.id,
+          sale_id: r.sale_id,
           product_id: r.product_id,
           name: r.name,
           pieces_per_carton: r.pieces_per_carton,

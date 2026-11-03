@@ -328,3 +328,16 @@ test('duesList shows when each shop\'s dues started and which sales are still un
   assert.equal(row.oldest_due_date, '2026-10-28')
   assert.deepEqual(row.unpaid_sales.map((u) => [u.sale_date, u.still_due, u.due]), [['2026-10-28', 100, 150]])
 })
+
+test('saleItemsByDate lines know their sale, so a day can count how many shops bought each product', async () => {
+  const { repo } = await openTestDb()
+  const p = await repo.saveProduct({ name: 'energy', pieces_per_carton: 24, unit_buy_price: 9.5 })
+  const shops = [await repo.addShop({ name: 'A' }), await repo.addShop({ name: 'B' }), await repo.addShop({ name: 'C' })]
+  for (const shopId of [...shops, shops[0]]) { // A buys twice
+    await repo.createSale({ shopId, saleDate: '2026-11-04', billAmount: 300, items: [{ productId: p, qtyPieces: 24 }] })
+  }
+  const shopOfSale = Object.fromEntries(repo.salesSummaryByDate('2026-11-04').map((r) => [r.id, r.shop_id]))
+  const lines = Object.values(repo.saleItemsByDate('2026-11-04')).flat()
+  assert.ok(lines.every((l) => shopOfSale[l.sale_id]))
+  assert.equal(new Set(lines.map((l) => shopOfSale[l.sale_id])).size, 3) // 3 shops, not 1 (and not 4 sales)
+})

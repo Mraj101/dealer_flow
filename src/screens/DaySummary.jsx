@@ -256,9 +256,13 @@ export default function DaySummary({ onEditSale = () => {} }) {
                               <tr key={it.id} className="align-top">
                                 <td className="py-1 pr-2">
                                   {it.name}
+                                  {/* buy price as it was on this sale (kept even if the product's price changed later) */}
+                                  <div className="text-xs text-gray-500">
+                                    {it.pieces_per_carton} pcs/ctn · buy {Number(it.unit_buy_price)}/pc
+                                  </div>
                                   {it.unit_sell_price !== null && (
                                     <div className="text-xs text-gray-500">
-                                      @ {fmt(it.unit_sell_price)} = {fmt(it.sold_for)}
+                                      sold @ {fmt(it.unit_sell_price)}/pc = {fmt(it.sold_for)}
                                     </div>
                                   )}
                                 </td>
@@ -319,6 +323,10 @@ export default function DaySummary({ onEditSale = () => {} }) {
                     <tr key={p.product_id}>
                       <td className="p-3">
                         {p.name}
+                        {/* variants can share a name: their pack size and price tell them apart */}
+                        <div className="text-xs text-gray-500">
+                          {p.pieces_per_carton} pcs/ctn · {Number(p.unit_buy_price)}/pc
+                        </div>
                         <div className="text-xs text-gray-500">{p.shops.size} shop{p.shops.size === 1 ? '' : 's'}</div>
                       </td>
                       <td className="p-3 text-right whitespace-nowrap">{fmtQty(p.qty_pieces, p.pieces_per_carton)}</td>
