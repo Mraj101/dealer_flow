@@ -6,6 +6,22 @@ const todayDhaka = () =>
 const fmt = (v) =>
   Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+// 'YYYY-MM-DD' -> '28 Oct 2026'
+const fmtDate = (d) =>
+  new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+const daysSince = (d) =>
+  Math.round((Date.parse(`${todayDhaka()}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86400000)
+// 0 -> 'today', 1 -> 'yesterday', 7 -> '7 days ago', 75 -> '2 months ago'
+const ago = (d) => {
+  const n = daysSince(d)
+  if (n <= 0) return 'today'
+  if (n === 1) return 'yesterday'
+  if (n < 60) return `${n} days ago`
+  return `${Math.floor(n / 30)} months ago`
+}
+// older dues stand out more
+const ageTone = (d) => (daysSince(d) > 30 ? 'text-red-600' : daysSince(d) > 7 ? 'text-amber-700' : 'text-gray-500')
+
 export default function Dues() {
   const [rows, setRows] = useState([]) // shops that owe, with balance
   const [credits, setCredits] = useState([]) // shops that paid more than they owe
@@ -69,6 +85,12 @@ export default function Dues() {
                   <div className="text-sm text-gray-600">
                     {[s.area, s.phone].filter(Boolean).join(' · ')}
                   </div>
+                  {s.oldest_due_date && (
+                    <div className={`text-xs ${ageTone(s.oldest_due_date)}`}>
+                      Due since {fmtDate(s.oldest_due_date)} · {ago(s.oldest_due_date)}
+                      {s.unpaid_sales.length > 1 && ` · ${s.unpaid_sales.length} unpaid sales`}
+                    </div>
+                  )}
                 </div>
                 <div className="text-right">
                   <div className="font-medium text-red-600">{fmt(s.balance)}</div>
@@ -79,6 +101,22 @@ export default function Dues() {
               </div>
               {openId === s.id && (
                 <div className="mt-3 space-y-2">
+                  <div className="rounded-lg bg-gray-50 p-2 text-sm">
+                    <div className="mb-1 text-xs font-medium text-gray-500">Unpaid sales, oldest first</div>
+                    <ul className="space-y-1">
+                      {s.unpaid_sales.map((u) => (
+                        <li key={u.id} className="flex justify-between gap-2">
+                          <span>
+                            {fmtDate(u.sale_date)} <span className={`text-xs ${ageTone(u.sale_date)}`}>· {ago(u.sale_date)}</span>
+                          </span>
+                          <span className="tabular-nums">
+                            {fmt(u.still_due)}
+                            {u.still_due < u.due && <span className="text-xs text-gray-500"> of {fmt(u.due)}</span>}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                   <input inputMode="decimal" value={amount} placeholder="Amount received"
                     onChange={(e) => setAmount(e.target.value)} className={input} />
                   <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={input} />

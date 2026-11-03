@@ -64,7 +64,7 @@ export function createRepo(driver) {
   // Returns { [saleId]: { paidLater, stillDue } } for every sale of the shop that created a due.
   const settleShopDues = (shopId) => {
     const sales = driver.all(
-      `select ss.id, ss.due from sales_summary ss join sales s on s.id = ss.id
+      `select ss.id, ss.due, ss.sale_date from sales_summary ss join sales s on s.id = ss.id
        where ss.shop_id = ? and ss.due > 0 order by ss.sale_date, s.created_at, s.rowid`,
       [shopId]
     )
@@ -77,7 +77,7 @@ export function createRepo(driver) {
     for (const s of sales) {
       const paid = Math.min(s.due, left)
       left -= paid
-      out[s.id] = { paidLater: paid, stillDue: s.due - paid }
+      out[s.id] = { paidLater: paid, stillDue: s.due - paid, saleDate: s.sale_date }
     }
     return out
   }
@@ -348,13 +348,20 @@ export function createRepo(driver) {
 
     // ---------- dues ----------
     // shops that owe money, biggest first
+    // unpaid_sales: the sales still (partly) unpaid, oldest first, each with what is left on it;
+    // oldest_due_date: when the oldest of them was sold (how long the shop has owed you)
     duesList() {
       const rows = driver.all(
         `select sh.id, sh.name, sh.area, sh.phone, b.balance
          from shops sh join shop_balances b on b.shop_id = sh.id
          where sh.deleted_at is null and b.balance > 0 order by b.balance desc, lower(sh.name)`
       )
-      return money(rows, ['balance'])
+      return money(rows, ['balance']).map((r) => {
+        const unpaid = Object.entries(settleShopDues(r.id))
+          .filter(([, d]) => d.stillDue > 0)
+          .map(([id, d]) => ({ id, sale_date: d.saleDate, still_due: toNumber(d.stillDue), due: toNumber(d.stillDue + d.paidLater) }))
+        return { ...r, unpaid_sales: unpaid, oldest_due_date: unpaid[0]?.sale_date ?? null }
+      })
     },
 
     // shops that paid more than they owe (e.g. a sale they paid for was deleted)

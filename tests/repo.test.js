@@ -308,3 +308,23 @@ test('everyday correction: 5 packs / bill 1500 / due 300 edited to 2 packs / bil
   assert.equal(driver.get('select count(*) c from sale_items where deleted_at is null').c, 1)
   assert.equal(driver.get('select _dirty from sales where id = ?', [id])._dirty, 1)
 })
+
+test('duesList shows when each shop\'s dues started and which sales are still unpaid', async () => {
+  const { repo } = await openTestDb()
+  const p = await repo.saveProduct({ name: 'x', pieces_per_carton: 10, unit_buy_price: 5 })
+  const s = await repo.addShop({ name: 'S' })
+  const item = [{ productId: p, qtyPieces: 10, unitSellPrice: null }]
+  await repo.createSale({ shopId: s, saleDate: '2026-10-20', billAmount: 300, paidAmount: 100, items: item }) // due 200
+  await repo.createSale({ shopId: s, saleDate: '2026-10-28', billAmount: 150, paidAmount: 0, items: item })   // due 150
+  await repo.createSale({ shopId: s, saleDate: '2026-11-01', billAmount: 80, paidAmount: 80, items: item })   // paid
+  let [row] = repo.duesList()
+  assert.equal(row.oldest_due_date, '2026-10-20')
+  assert.deepEqual(row.unpaid_sales.map((u) => [u.sale_date, u.still_due, u.due]), [['2026-10-20', 200, 200], ['2026-10-28', 150, 150]])
+
+  // the oldest is paid off (and a bit more): the shop now owes "since" the next sale
+  await repo.createPayment({ shopId: s, amount: 250, payDate: '2026-11-02' })
+  ;[row] = repo.duesList()
+  assert.equal(row.balance, 100)
+  assert.equal(row.oldest_due_date, '2026-10-28')
+  assert.deepEqual(row.unpaid_sales.map((u) => [u.sale_date, u.still_due, u.due]), [['2026-10-28', 100, 150]])
+})

@@ -101,6 +101,10 @@ try {
   await tab(a, 'Dues')
   await a.getByText('Alauddin').first().waitFor()
   assert.match(await a.locator('body').innerText(), /Total to collect\s*200\.00/)
+  assert.match(await a.locator('body').innerText(), /Due since \d+ \w+ \d{4} · today/)
+  await a.getByRole('button', { name: 'Collect' }).click()
+  assert.match(await a.locator('body').innerText(), /Unpaid sales, oldest first[\s\S]*today\s*200\.00/)
+  await a.getByRole('button', { name: 'Close' }).click()
   ok('offline: Dues shows Alauddin owing 200.00')
 
   // ---------- reconnect ----------
