@@ -285,3 +285,26 @@ test('deleteSaleImpact warns about old dates and dues already paid (shop ends in
   assert.equal(repo.totalOwed(), 0)
   assert.deepEqual(repo.duesList(), [])
 })
+
+test('everyday correction: 5 packs / bill 1500 / due 300 edited to 2 packs / bill 700 / collected 500 / due 200', async () => {
+  const { repo, driver } = await openTestDb()
+  const pack = await repo.saveProduct({ name: 'illopbillo', pieces_per_carton: 10, unit_buy_price: 200 })
+  const shop = await repo.addShop({ name: 'S' })
+  const sold = () => repo.productStock().find((x) => x.product_id === pack).sold_pieces
+  const id = await repo.createSale({ shopId: shop, saleDate: '2026-11-04', billAmount: 1500, paidAmount: 1200,
+    items: [{ productId: pack, qtyPieces: 5 }] })
+  let [row] = repo.salesSummaryByDate('2026-11-04')
+  assert.deepEqual([row.total, row.paid_amount, row.due, sold()], [1500, 1200, 300, 5])
+
+  const s = repo.getSale(id)
+  await repo.updateSale(id, { shopId: shop, saleDate: '2026-11-04', billAmount: 700, paidAmount: 500,
+    items: [{ itemId: s.items[0].id, productId: pack, qtyPieces: 2 }] })
+  ;[row] = repo.salesSummaryByDate('2026-11-04')
+  assert.deepEqual([row.total, row.paid_amount, row.due, sold()], [700, 500, 200, 2])
+  assert.equal(repo.totalOwed(), 200)
+  assert.equal(repo.dayCash('2026-11-04').duesIn, 0)
+  // still one sale and one line, waiting to sync as a single update (offline it never touches Supabase)
+  assert.equal(driver.get('select count(*) c from sales').c, 1)
+  assert.equal(driver.get('select count(*) c from sale_items where deleted_at is null').c, 1)
+  assert.equal(driver.get('select _dirty from sales where id = ?', [id])._dirty, 1)
+})
