@@ -216,3 +216,51 @@ test('createSyncer: one at a time, status, and offline detection', opts, async (
   assert.equal(syncer.status.pending, 0)
   assert.ok(syncer.status.lastSyncAt)
 })
+
+test('editing and deleting a sale on the phone reaches the server, and server views agree', opts, async () => {
+  const { repo, driver } = await openTestDb()
+  const ids = await seedScenario(repo)
+  const remote = createPgRemote(pool, USER)
+  await syncOnce(driver, remote)
+
+  // edit the Alauddin sale: more cola, drop malai, bill 600 / paid 250
+  const [sale] = repo.salesSummaryByDate('2026-10-19')
+  const s = repo.getSale(sale.id)
+  const colaLine = s.items.find((i) => i.product_id === ids.cola)
+  await repo.updateSale(sale.id, { shopId: s.shop_id, saleDate: s.sale_date, billAmount: 600, paidAmount: 250,
+    items: [{ itemId: colaLine.id, productId: ids.cola, qtyPieces: 48 }] })
+  let r = await syncOnce(driver, remote)
+  assert.deepEqual(r.errors, [])
+  const srv = (await pool.query('select bill_amount, paid_amount from sales where id = $1', [sale.id])).rows[0]
+  assert.deepEqual([srv.bill_amount, srv.paid_amount], ['600.00', '250.00'])
+  const live = (await pool.query('select count(*) c from sale_items where sale_id = $1 and deleted_at is null', [sale.id])).rows[0]
+  assert.equal(Number(live.c), 1)
+  const sv = (await pool.query('select cost, due from sales_summary where id = $1', [sale.id])).rows[0]
+  assert.deepEqual([Number(sv.cost), Number(sv.due)], [864, 350])  // 48 x 18, 600 - 250
+  assert.deepEqual([repo.salesSummaryByDate('2026-10-19')[0].cost, repo.salesSummaryByDate('2026-10-19')[0].due], [864, 350])
+
+  // delete it: nothing is removed on the server, only marked; balances agree on both sides
+  await repo.deleteSale(sale.id)
+  r = await syncOnce(driver, remote)
+  assert.deepEqual(r.errors, [])
+  assert.ok((await pool.query('select deleted_at from sales where id = $1', [sale.id])).rows[0].deleted_at)
+  assert.equal(Number((await pool.query('select count(*) c from sale_items where sale_id = $1 and deleted_at is null', [sale.id])).rows[0].c), 0)
+  assert.equal(Number((await pool.query('select count(*) c from sales')).rows[0].c), 2) // still there
+  // Alauddin paid 100 later, and its only sale is gone: a credit of 100 on both sides
+  const bal = (await pool.query("select b.balance from shop_balances b join shops s on s.id = b.shop_id where s.name = 'Alauddin'")).rows[0]
+  assert.equal(Number(bal.balance), -100)
+  assert.deepEqual(repo.creditList().map((c) => [c.name, c.credit]), [['Alauddin', 100]])
+})
+
+test('an edit the server refuses (paid above bill) is reported on the row, not lost', opts, async () => {
+  const { repo, driver } = await openTestDb()
+  await seedScenario(repo)
+  const remote = createPgRemote(pool, USER)
+  await syncOnce(driver, remote)
+  const [sale] = repo.salesSummaryByDate('2026-10-20')
+  // bypass the phone's own check to prove the server's rule still protects the data
+  driver.run('update sales set paid_amount = bill_amount + 10000, _dirty = 1, _ver = _ver + 1 where id = ?', [sale.id])
+  const r = await syncOnce(driver, remote)
+  assert.ok(r.errors.some((e) => /sales_paid_le_bill/.test(e.message)))
+  assert.equal(driver.get('select _dirty from sales where id = ?', [sale.id])._dirty, 1)
+})

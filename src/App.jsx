@@ -26,6 +26,10 @@ const remember = (id) => { try { id ? localStorage.setItem(USER_KEY, id) : local
 
 export default function App() {
   const [tab, setTab] = useState('sale')
+  const [editSaleId, setEditSaleId] = useState(null) // a sale opened from the Day screen for editing
+
+  // every screen (and the edit screen) starts at the top, not where the last one was scrolled to
+  useEffect(() => { window.scrollTo(0, 0) }, [tab, editSaleId])
   // loading | login | starting | firstSync | ready | error
   const [phase, setPhase] = useState('loading')
   const [problem, setProblem] = useState(null)
@@ -103,13 +107,17 @@ export default function App() {
     <div className="mx-auto min-h-screen max-w-md bg-gray-50 pb-24 pt-[env(safe-area-inset-top)]">
       <main className="p-4">
         <SyncBar />
-        <Screen />
+        <Screen
+          editSaleId={editSaleId}
+          onEditSale={(id) => { setEditSaleId(id); setTab('sale') }}
+          onDoneEditing={() => { setEditSaleId(null); setTab('day') }}
+        />
       </main>
       <nav className="fixed inset-x-0 bottom-0 mx-auto flex max-w-md border-t bg-white pb-[env(safe-area-inset-bottom)]">
         {TABS.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => { setEditSaleId(null); setTab(t.id) }}
             className={`flex-1 py-4 text-xs font-medium ${
               tab === t.id ? 'text-blue-600' : 'text-gray-500'
             }`}

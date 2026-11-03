@@ -2,7 +2,8 @@ import { useState } from 'react'
 
 // options: [{ value, label, hint? }] (hint = small grey second line); value: selected value as string ('' = none)
 // disabledValues: values shown greyed out and not selectable (e.g. already used on another line)
-export default function SearchSelect({ options, value, onChange, placeholder, disabledValues = [] }) {
+// onCreate(text): if given, the list offers '+ Add "<typed text>"' when nothing matches it exactly
+export default function SearchSelect({ options, value, onChange, placeholder, disabledValues = [], onCreate, createLabel = 'Add' }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
 
@@ -12,6 +13,9 @@ export default function SearchSelect({ options, value, onChange, placeholder, di
 
   const isDisabled = (o) =>
     String(o.value) !== String(value) && disabledValues.some((d) => String(d) === String(o.value))
+
+  const typed = query.trim()
+  const canCreate = Boolean(onCreate) && typed !== '' && !options.some((o) => o.label.toLowerCase() === q)
 
   const pick = (o) => {
     if (isDisabled(o)) return
@@ -32,7 +36,15 @@ export default function SearchSelect({ options, value, onChange, placeholder, di
       />
       {open && (
         <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border bg-white shadow-lg">
-          {shown.length === 0 && <li className="p-3 text-gray-500">No match</li>}
+          {shown.length === 0 && !canCreate && <li className="p-3 text-gray-500">No match</li>}
+          {canCreate && (
+            <li
+              onMouseDown={(e) => { e.preventDefault(); setQuery(''); setOpen(false); onCreate(typed) }}
+              className="cursor-pointer border-b p-3 font-medium text-blue-600 hover:bg-blue-50"
+            >
+              + {createLabel} “{typed}”
+            </li>
+          )}
           {shown.map((o) => (
             <li
               key={o.value}

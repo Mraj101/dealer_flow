@@ -8,13 +8,17 @@ const fmt = (v) =>
 
 export default function Dues() {
   const [rows, setRows] = useState([]) // shops that owe, with balance
+  const [credits, setCredits] = useState([]) // shops that paid more than they owe
   const [openId, setOpenId] = useState(null)
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(todayDhaka())
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
 
-  const load = () => setRows(repo.duesList())
+  const load = () => {
+    setRows(repo.duesList())
+    setCredits(repo.creditList())
+  }
   useEffect(() => { load() }, [])
 
   const open = (id) => {
@@ -88,6 +92,29 @@ export default function Dues() {
             </li>
           ))}
         </ul>
+      )}
+
+      {credits.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="font-semibold">Shops with credit</h2>
+          <p className="text-sm text-gray-600">
+            These shops paid more than they owe, for example a sale they had paid for was deleted.
+            Their credit is used up automatically by their next unpaid sale.
+          </p>
+          <ul className="divide-y rounded-lg border bg-white">
+            {credits.map((c) => (
+              <li key={c.id} className="flex items-center justify-between gap-2 p-3">
+                <div>
+                  <div>{c.name}</div>
+                  {(c.area || c.phone) && (
+                    <div className="text-sm text-gray-600">{[c.area, c.phone].filter(Boolean).join(' · ')}</div>
+                  )}
+                </div>
+                <div className="font-medium text-green-700">Credit {fmt(c.credit)}</div>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </div>
   )

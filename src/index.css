@@ -1,1 +1,9 @@
 @import "tailwindcss";
+
+/* Tailwind v4 makes plain `border` use the text colour (near-black).
+   Bring back the soft grey borders the screens were designed with. */
+@layer base {
+  *, ::after, ::before, ::backdrop, ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+}

@@ -94,8 +94,8 @@ try {
   await a.getByRole('button', { name: 'Sale', exact: true }).waitFor({ timeout: 15000 })
   await waitSync(a, /Offline · 1 waiting/)
   await tab(a, 'Day')
-  await a.getByText('Alauddin (nobigonj)').waitFor()
-  assert.match(await a.locator('body').innerText(), /Due created by today's sales\s*200\.00/)
+  await a.getByRole('button', { name: /Alauddin/ }).waitFor()
+  assert.match(await a.locator('body').innerText(), /Still unpaid\s*200\.00/)
   ok('offline reload: app opens with no internet and the sale is still there')
 
   await tab(a, 'Dues')
@@ -160,8 +160,25 @@ try {
   assert.match(await b.locator('li', { hasText: 'cola' }).first().innerText(), /8 ctn/)
   await tab(b, 'Day')
   await b.locator('input[type="date"]').fill(sale.sale_date)
-  await b.getByText('Alauddin (nobigonj)').waitFor()
+  await b.getByRole('button', { name: /Alauddin/ }).waitFor()
   ok('second phone: signs in, downloads everything, same sale and same stock')
+
+  const card = b.locator('li', { hasText: 'Alauddin' })
+  assert.match(await card.innerText(), /cola 1 ctn/)       // items preview on the closed card
+  await b.getByRole('button', { name: /Alauddin/ }).click()
+  await card.getByText('Due from this sale').waitFor() // the details slide open
+  const details = await card.innerText()
+  assert.match(details, /cola\s+1 ctn\s+432\.00/)     // 24 pcs x 18
+  assert.match(details, /Bill\s*600\.00/)
+  // the 200 due was collected later on phone A (Dues > Collect), so this old sale shows it as paid
+  assert.match(details, /Paid later ✓/)
+  assert.match(details, /Due from this sale\s*200\.00/)
+  assert.match(details, /Paid later\s*200\.00/)
+  assert.match(details, /Still due\s*0\.00/)
+  assert.match(await b.locator('body').innerText(), /Still unpaid\s*0\.00/)
+  await b.getByRole('tab', { name: /Products/ }).click()
+  assert.match(await b.locator('table').innerText(), /cola\s+1 shop\s+1 ctn\s+432\.00/)
+  ok('Day screen: items (cola · 1 ctn, cost 432.00); a due collected later shows as paid, not still due')
 
   // ---------- expired login, no internet: the app still opens ----------
   server.state.offline = true
@@ -174,7 +191,7 @@ try {
   await a.reload()
   await a.getByRole('button', { name: 'Sale', exact: true }).waitFor({ timeout: 15000 })
   await tab(a, 'Day')
-  await a.getByText('Alauddin (nobigonj)').waitFor()
+  await a.getByRole('button', { name: /Alauddin/ }).waitFor()
   ok('login expired + no internet: the app still opens and shows your data')
   server.state.offline = false
 
@@ -193,6 +210,73 @@ try {
   await tab(c, 'Products')
   await c.getByText('malai fun').waitFor()
   ok('first download fails -> clear message; "Try again" works once internet is back')
+
+  // ---------- add a shop straight from the Sale screen's search ----------
+  await tab(a, 'Sale')
+  await a.getByPlaceholder('Search shop').click()
+  await a.getByPlaceholder('Search shop').fill('Karim Store')
+  await a.getByText('+ Add new shop “Karim Store”').click()
+  assert.equal(await a.getByLabel('New shop name').inputValue(), 'Karim Store')
+  await a.getByPlaceholder('Area (optional)').fill('Bandar')
+  await a.getByRole('button', { name: 'Save shop' }).click()
+  await a.waitForFunction(() => // saving is async: wait until the new shop is selected for this sale
+    document.querySelector('input[placeholder="Search shop"]').value === 'Karim Store (Bandar)')
+  await waitSync(a, /All synced/)
+  assert.ok([...server.tables.shops.values()].some((sh) => sh.name === 'Karim Store' && sh.area === 'Bandar'))
+  // typing an existing name offers no "add"; a duplicate name + area is refused
+  await a.getByPlaceholder('Search shop').click()
+  await a.getByPlaceholder('Search shop').fill('alauddin')
+  assert.equal(await a.getByText(/\+ Add new shop/).count(), 1) // 'alauddin' alone is not an exact shop label
+  await a.getByPlaceholder('Search shop').fill('Karim Store (Bandar)')
+  assert.equal(await a.getByText(/\+ Add new shop/).count(), 0)
+  await a.getByPlaceholder('Search shop').fill('karim store')
+  await a.getByText(/\+ Add new shop/).click()
+  await a.getByPlaceholder('Area (optional)').fill('bandar')
+  await a.getByRole('button', { name: 'Save shop' }).click()
+  await a.getByText('This shop already exists in this area').waitFor()
+  await a.getByRole('button', { name: 'Cancel' }).click()
+  ok('add a shop from the Sale search: name pre-filled, selected for the sale, synced; duplicates refused')
+
+  // ---------- edit a sale, then delete it, with NO internet ----------
+  server.state.offline = true
+  await tab(a, 'Day')
+  await a.locator('input[type="date"]').fill(sale.sale_date)
+  await a.getByRole('button', { name: /Alauddin/ }).click()
+  await a.getByRole('button', { name: 'Edit sale' }).click()
+  await a.getByRole('heading', { name: 'Edit sale' }).waitFor()
+  assert.equal(await a.locator('#bill').inputValue(), '600')
+  assert.equal(await a.locator('#paid').inputValue(), '400')
+  await a.locator('#bill').fill('650')
+  await a.getByRole('button', { name: 'Save changes' }).click()
+  await a.getByRole('button', { name: /Alauddin/ }).waitFor() // back on the Day screen
+  assert.match(await a.locator('li', { hasText: 'Alauddin' }).innerText(), /650\.00/)
+  await waitSync(a, /Offline · 1 waiting/)
+  assert.equal([...server.tables.sales.values()][0].bill_amount, '600') // server not told yet
+  ok('offline edit: opens filled in, saves on the phone (bill 600 -> 650), waits to sync')
+
+  const dialogs = []
+  a.once('dialog', (d) => { dialogs.push(d.message()); d.accept() })
+  await a.getByRole('button', { name: /Alauddin/ }).click()
+  await a.getByRole('button', { name: 'Delete sale' }).click()
+  await a.getByText('No sales on this day').waitFor()
+  assert.match(dialogs[0], /already paid 200\.00/)
+  assert.match(dialogs[0], /200\.00 credit/)
+  await waitSync(a, /Offline · 1 waiting/)
+  assert.ok(![...server.tables.sales.values()][0].deleted_at) // server not told yet
+
+  // back online: both changes go out
+  server.state.offline = false
+  await a.evaluate(() => window.dispatchEvent(new Event('online')))
+  await waitSync(a, /All synced/)
+  assert.equal(server.tables.sales.size, 1) // edited and deleted in place, never duplicated
+  assert.equal([...server.tables.sales.values()][0].bill_amount, '650')
+  const deleted = [...server.tables.sales.values()][0]
+  assert.ok(deleted.deleted_at, 'sale is marked deleted on the server, not removed')
+  assert.ok([...server.tables.sale_items.values()].every((i) => i.deleted_at))
+  await tab(a, 'Dues')
+  await a.getByText('Shops with credit').waitFor()
+  assert.match(await a.locator('body').innerText(), /Credit 200\.00/)
+  ok('offline delete: warns about the 200 paid later; on reconnect the edit + delete sync; shop shows 200 credit')
 
   // ---------- the DevTools helpers for looking inside the phone's database ----------
   const insp = await c.evaluate(() => {

@@ -6,7 +6,7 @@ import { createRepo } from './repo.js'
 import { createSyncer, failedRows, pendingCounts } from './sync.js'
 import { createSupabaseRemote } from './remote.supabase.js'
 
-const WRITES = ['addShop', 'saveProduct', 'deleteProduct', 'createSale', 'createPayment', 'createCompanyPayment', 'createReceipt']
+const WRITES = ['addShop', 'saveProduct', 'deleteProduct', 'createSale', 'updateSale', 'deleteSale', 'createPayment', 'createCompanyPayment', 'createReceipt']
 
 let current = null // { userId, repo, syncer, driver }
 
