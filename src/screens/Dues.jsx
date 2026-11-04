@@ -22,10 +22,11 @@ const ago = (d) => {
 // older dues stand out more
 const ageTone = (d) => (daysSince(d) > 30 ? 'text-red-600' : daysSince(d) > 7 ? 'text-amber-700' : 'text-gray-500')
 
-export default function Dues() {
+// openShopId: open the Collect form for this shop straight away (e.g. from a day's dues)
+export default function Dues({ openShopId = null }) {
   const [rows, setRows] = useState([]) // shops that owe, with balance
   const [credits, setCredits] = useState([]) // shops that paid more than they owe
-  const [openId, setOpenId] = useState(null)
+  const [openId, setOpenId] = useState(openShopId)
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(todayDhaka())
   const [saving, setSaving] = useState(false)
@@ -36,6 +37,10 @@ export default function Dues() {
     setCredits(repo.creditList())
   }
   useEffect(() => { load() }, [])
+  // opened for one shop: bring it into view
+  useEffect(() => {
+    if (openShopId && rows.length) document.getElementById(`due-${openShopId}`)?.scrollIntoView({ block: 'center' })
+  }, [openShopId, rows.length])
 
   const open = (id) => {
     setOpenId(openId === id ? null : id)
@@ -78,7 +83,7 @@ export default function Dues() {
       ) : (
         <ul className="divide-y rounded-lg border bg-white">
           {rows.map((s) => (
-            <li key={s.id} className="p-3">
+            <li key={s.id} id={`due-${s.id}`} className="p-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div>{s.name}</div>

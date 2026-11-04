@@ -33,7 +33,6 @@ export default function AddShop() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold">Add shop</h1>
       <form onSubmit={save} className="space-y-3">
         <input value={form.name} onChange={(e) => set({ name: e.target.value })}
           placeholder="Shop name" className={input} />

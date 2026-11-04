@@ -31,13 +31,21 @@ function statusOf(r) {
   return { text: `Due ${fmt(r.due)}`, tone: 'bg-red-100 text-red-700' }
 }
 
-function Tile({ label, value, sub, tone = 'text-gray-900' }) {
-  return (
-    <div className="rounded-xl border bg-white p-3">
-      <div className="text-xs text-gray-500">{label}</div>
+// onClick makes the tile a button (with a small "›" so it looks tappable)
+function Tile({ label, value, sub, tone = 'text-gray-900', onClick }) {
+  const body = (
+    <>
+      <div className="flex justify-between text-xs text-gray-500">
+        <span>{label}</span>{onClick && <span aria-hidden="true">›</span>}
+      </div>
       <div className={`mt-0.5 text-lg font-semibold tabular-nums ${tone}`}>{value}</div>
       {sub && <div className="text-xs text-gray-500">{sub}</div>}
-    </div>
+    </>
+  )
+  return onClick ? (
+    <button type="button" onClick={onClick} className="rounded-xl border bg-white p-3 text-left active:bg-gray-50">{body}</button>
+  ) : (
+    <div className="rounded-xl border bg-white p-3">{body}</div>
   )
 }
 
@@ -47,8 +55,9 @@ const Row = ({ label, value, className = '' }) => (
   </div>
 )
 
-export default function DaySummary({ onEditSale = () => {} }) {
-  const [date, setDate] = useState(todayDhaka())
+// initialDate: open on a given day (e.g. from the monthly report), otherwise today
+export default function DaySummary({ onEditSale = () => {}, initialDate = null, nav }) {
+  const [date, setDate] = useState(initialDate ?? todayDhaka())
   const [rows, setRows] = useState([])
   const [itemsBySale, setItemsBySale] = useState({})
   const [duesIn, setDuesIn] = useState(0) // old dues collected on this date
@@ -158,8 +167,9 @@ export default function DaySummary({ onEditSale = () => {} }) {
         <Tile label="Profit" value={fmt(profit)} tone={profit < 0 ? 'text-red-600' : 'text-green-700'} />
         <Tile label="Sold (bills)" value={fmt(sum('total'))} sub={`${rows.length} shop${rows.length === 1 ? '' : 's'}`} />
         <Tile label="Cost of goods" value={fmt(sum('cost'))} />
-        <Tile label="Still unpaid" value={fmt(stillDue)} sub={due > 0 ? `of ${fmt(due)} due this day` : 'no dues this day'}
-          tone={stillDue > 0 ? 'text-red-600' : 'text-gray-900'} />
+        <Tile label="Still unpaid" value={fmt(stillDue)} sub={due > 0 ? `of ${fmt(due)} due this day · see dues` : 'no dues this day'}
+          tone={stillDue > 0 ? 'text-red-600' : 'text-gray-900'}
+          onClick={due > 0 ? () => nav.go('daydues', { date }) : undefined} />
       </div>
       <div className="flex justify-between rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-700">
         <span>All shops owe you now</span><span className="font-medium tabular-nums">{fmt(owedNow)}</span>

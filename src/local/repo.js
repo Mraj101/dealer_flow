@@ -127,7 +127,7 @@ export function createRepo(driver) {
       [name, area || '']
     )
 
-  return {
+  const api = {
     uuid,
     driver,
 
@@ -338,6 +338,98 @@ export function createRepo(driver) {
       return bySale
     },
 
+    // Everything about one month ('YYYY-MM'), read only. Same rules as the Day screen:
+    // cash counts on the day it came in, profit on the day of the sale.
+    monthReport(month) {
+      const from = `${month}-01`
+      const to = `${month}-31` // dates are 'YYYY-MM-DD' text, so this covers the whole month
+      const sales = driver.all(
+        `select ss.id, ss.shop_id, ss.sale_date, ss.paid_amount, ss.cost, ss.total, ss.due, ss.profit
+         from sales_summary ss where ss.sale_date between ? and ?`, [from, to])
+      const dues = driver.all(
+        `select pay_date as d, sum(amount) as v from payments
+         where deleted_at is null and status = 1 and pay_date between ? and ? group by pay_date`, [from, to])
+      const driverPaid = driver.all(
+        `select receive_date as d, sum(driver_paid) as v from receipts
+         where deleted_at is null and receive_date between ? and ? group by receive_date`, [from, to])
+
+      // what is still unpaid today from this month's sales (payments go to the oldest dues first)
+      const settled = {}
+      for (const shopId of new Set(sales.map((r) => r.shop_id))) Object.assign(settled, settleShopDues(shopId))
+
+      const days = {}
+      const day = (d) => (days[d] ??= { date: d, sales: 0, billed: 0, collected: 0, dues_in: 0, driver_in: 0, cost: 0, profit: 0 })
+      const t = { sales: 0, billed: 0, collected: 0, dues_in: 0, driver_in: 0, cost: 0, profit: 0, due: 0, still_due: 0 }
+      for (const r of sales) {
+        const d = day(r.sale_date)
+        d.sales++; d.billed += r.total ?? 0; d.collected += r.paid_amount; d.cost += r.cost; d.profit += r.profit
+        t.sales++; t.billed += r.total ?? 0; t.collected += r.paid_amount; t.cost += r.cost; t.profit += r.profit
+        t.due += Math.max(r.due, 0)
+        t.still_due += settled[r.id]?.stillDue ?? Math.max(r.due, 0)
+      }
+      for (const r of dues) { day(r.d).dues_in += r.v; t.dues_in += r.v }
+      for (const r of driverPaid) { day(r.d).driver_in += r.v; t.driver_in += r.v }
+
+      const shops = {}
+      for (const r of sales) {
+        const sh = (shops[r.shop_id] ??= { shop_id: r.shop_id, sales: 0, billed: 0, profit: 0, still_due: 0 })
+        sh.sales++; sh.billed += r.total ?? 0; sh.profit += r.profit
+        sh.still_due += settled[r.id]?.stillDue ?? Math.max(r.due, 0)
+      }
+      const names = Object.fromEntries(driver.all('select id, name, area from shops').map((x) => [x.id, x]))
+
+      const products = driver.all(
+        `select i.product_id, p.name, p.pieces_per_carton, sum(i.qty_pieces) as qty_pieces,
+                sum(i.qty_pieces * i.unit_buy_price) as cost, count(distinct s.shop_id) as shops
+         from sale_items i
+         join sales s on s.id = i.sale_id and s.deleted_at is null and s.cancelled_at is null
+         left join products p on p.id = i.product_id
+         where i.deleted_at is null and s.sale_date between ? and ?
+         group by i.product_id order by cost desc`, [from, to])
+
+      const goods = driver.get(
+        `select coalesce(sum(memo_amount), 0) as v from receipts
+         where deleted_at is null and receive_date between ? and ?`, [from, to]).v
+      const toCompany = driver.get(
+        `select coalesce(sum(amount), 0) as v from company_payments
+         where deleted_at is null and pay_date between ? and ?`, [from, to]).v
+
+      const num = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) =>
+        [k, typeof v === 'number' && !['sales', 'shops', 'qty_pieces', 'pieces_per_carton'].includes(k) ? toNumber(v) : v]))
+      return {
+        month,
+        totals: num({ ...t, cash_in: t.collected + t.dues_in + t.driver_in, shops: Object.keys(shops).length }),
+        days: Object.values(days).sort((a, b) => a.date.localeCompare(b.date)).map(num),
+        shops: Object.values(shops).sort((a, b) => b.billed - a.billed)
+          .map((x) => num({ ...x, name: names[x.shop_id]?.name ?? 'Unknown shop', area: names[x.shop_id]?.area ?? null })),
+        products: products.map((x) => num({ ...x, name: x.name ?? '(unknown product)' })),
+        stock: { goods_received: toNumber(goods), paid_to_company: toNumber(toCompany) },
+      }
+    },
+
+    // The dues created by one day's sales and what became of them, for the "dues of this day" page.
+    // Each row: the sale (bill, collected at the sale, due, paid later, still due), its shop, what
+    // was sold, how much the shop owes in total now, and its last payment.
+    dayDues(date) {
+      const sales = api.salesSummaryByDate(date).filter((r) => r.due > 0)
+      const items = api.saleItemsByDate(date)
+      const shopIds = [...new Set(sales.map((r) => r.shop_id))]
+      const shops = Object.fromEntries(shopIds.map((id) => [id, driver.get(
+        `select sh.id, sh.name, sh.area, sh.phone, coalesce(b.balance, 0) as balance
+         from shops sh left join shop_balances b on b.shop_id = sh.id where sh.id = ?`, [id])]))
+      const lastPay = Object.fromEntries(shopIds.map((id) => [id, driver.get(
+        `select pay_date, amount from payments where shop_id = ? and deleted_at is null and status = 1
+         order by pay_date desc, created_at desc limit 1`, [id])]))
+      return sales.map((r) => ({
+        ...r,
+        shop: { ...shops[r.shop_id], balance: toNumber(shops[r.shop_id]?.balance ?? 0) },
+        items: items[r.id] || [],
+        last_payment: lastPay[r.shop_id]
+          ? { date: lastPay[r.shop_id].pay_date, amount: toNumber(lastPay[r.shop_id].amount) }
+          : null,
+      }))
+    },
+
     // cash that came in on a date apart from the sales themselves
     dayCash(date) {
       const dues = driver.get(
@@ -464,4 +556,5 @@ export function createRepo(driver) {
       return money(rows, ['memo_amount', 'driver_paid', 'short_value'])
     },
   }
+  return api
 }

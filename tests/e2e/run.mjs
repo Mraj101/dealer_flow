@@ -33,7 +33,13 @@ async function newPhone() {
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|net::ERR/.test(m.text())) pageErrors.push(m.text()) })
   return { context, page }
 }
-const tab = (page, name) => page.locator('nav button', { hasText: new RegExp(`^${name}$`) }).click()
+// Home, Day, Sale, Dues and More are in the bottom bar; everything else is a tile on the More page
+const BAR = ['Home', 'Day', 'Sale', 'Dues', 'More']
+const tab = async (page, name) => {
+  if (BAR.includes(name)) return page.locator('nav button', { hasText: new RegExp(`^${name}$`) }).click()
+  await page.locator('nav button', { hasText: /^More$/ }).click()
+  await page.getByRole('button', { name: new RegExp(`^${name}`) }).click()
+}
 const syncText = (page) => page.locator('div.mb-4.rounded-lg').first().innerText()
 const waitSync = (page, re) => page.waitForFunction((src) =>
   new RegExp(src).test(document.querySelector('div.mb-4.rounded-lg')?.innerText || ''), re.source, { timeout: 15000 })
@@ -95,7 +101,20 @@ try {
   await waitSync(a, /Offline · 1 waiting/)
   await tab(a, 'Day')
   await a.getByRole('button', { name: /Alauddin/ }).waitFor()
-  assert.match(await a.locator('body').innerText(), /Still unpaid\s*200\.00/)
+  assert.match(await a.locator('body').innerText(), /Still unpaid\s*›?\s*200\.00/)
+  // tap "Still unpaid": only this day's dues, then straight to collecting from that shop
+  await a.getByRole('button', { name: /Still unpaid/ }).click()
+  await a.getByRole('heading', { name: 'Dues from this day' }).waitFor()
+  const dd = await a.locator('main').innerText()
+  assert.match(dd, /Due from 1 sale this day\s*200\.00/)
+  assert.match(dd, /Alauddin[\s\S]*Unpaid[\s\S]*cola 1 ctn/)
+  assert.match(dd, /Bill\s*600\.00\s*Collected at the sale\s*400\.00\s*Due from this sale\s*200\.00\s*Paid later\s*0\.00\s*Still due\s*200\.00/)
+  assert.match(dd, /No payment received from this shop since/)
+  await a.getByRole('button', { name: 'Collect from Alauddin' }).click()
+  await a.getByPlaceholder('Amount received').waitFor()                 // Dues opens with Alauddin's form open
+  await a.getByRole('button', { name: 'Back' }).click()
+  await a.getByRole('button', { name: 'Back' }).click()
+  await a.getByRole('button', { name: /Still unpaid/ }).waitFor()      // back on the Day screen
   ok('offline reload: app opens with no internet and the sale is still there')
 
   await tab(a, 'Dues')
@@ -137,15 +156,14 @@ try {
   ok('collected the due; shop disappears from Dues; payment synced')
 
   // ---------- receive stock, check stock numbers ----------
-  await tab(a, 'Stock')
-  await a.getByRole('button', { name: 'Receive' }).click()
+  await tab(a, 'Receive goods')
   await a.getByPlaceholder('Search product').click()
   await a.locator('li', { hasText: 'cola' }).first().click()
   await a.getByPlaceholder('Cartons').first().fill('10')
   await a.getByPlaceholder('Cartons').nth(1).fill('9') // one carton short
   await a.getByRole('button', { name: 'Save delivery' }).click()
   await a.getByText('Delivery saved, stock updated').waitFor()
-  await a.getByRole('button', { name: 'In stock' }).click()
+  await tab(a, 'In stock')
   assert.match(await a.locator('li', { hasText: 'cola' }).first().innerText(), /8 ctn/) // 9 cartons - 1 sold carton
   await waitSync(a, /All synced/)
   assert.equal(server.tables.receipt_items.size, 1)
@@ -159,8 +177,7 @@ try {
   await b.getByPlaceholder('Password').fill('pw')
   await b.getByRole('button', { name: 'Sign in' }).click()
   await waitSync(b, /All synced/)
-  await tab(b, 'Stock')
-  await b.getByRole('button', { name: 'In stock' }).click()
+  await tab(b, 'In stock')
   assert.match(await b.locator('li', { hasText: 'cola' }).first().innerText(), /8 ctn/)
   await tab(b, 'Day')
   await b.locator('input[type="date"]').fill(sale.sale_date)
@@ -179,7 +196,7 @@ try {
   assert.match(details, /Due from this sale\s*200\.00/)
   assert.match(details, /Paid later\s*200\.00/)
   assert.match(details, /Still due\s*0\.00/)
-  assert.match(await b.locator('body').innerText(), /Still unpaid\s*0\.00/)
+  assert.match(await b.locator('body').innerText(), /Still unpaid\s*›?\s*0\.00/)
   await b.getByRole('tab', { name: /Products/ }).click()
   assert.match(await b.locator('table').innerText(), /cola\s+24 pcs\/ctn · 18\/pc\s+1 shop\s+1 ctn\s+432\.00/)
   ok('Day screen: items (cola · 1 ctn, cost 432.00); a due collected later shows as paid, not still due')
@@ -295,6 +312,46 @@ try {
   assert.equal(insp.refused, true)
   assert.equal(insp.count, 2)
   ok('dealerDb.tables() / dealerDb.query() work in the browser; writes through it are refused')
+
+  // ---------- the new frame: Home, More, back, monthly report, Settings ----------
+  await tab(c, 'Home')
+  const home = await c.locator('main').innerText()
+  assert.match(home, /Cash in hand today/)
+  assert.match(home, /Shops owe you/)
+  await c.getByRole('button', { name: /Receive goods/ }).click()           // a Home shortcut opens a page...
+  await c.getByRole('heading', { name: 'Receive goods' }).waitFor()        // ...with its title in the header
+  await c.getByRole('button', { name: 'Back' }).click()                    // and the back arrow returns
+  await c.getByRole('heading', { name: 'Today' }).waitFor()
+  ok('Home: cash today, dues, shortcuts open pages with a header and a working back arrow')
+
+  await tab(c, 'Monthly report')
+  const month = sale.sale_date.slice(0, 7)
+  const report = await c.locator('main').innerText()
+  assert.match(report, /Cash in this month/)
+  assert.match(report, /Sold \(bills\)/)
+  await c.locator('tbody tr').first().click()                              // tap a day -> that day opens
+  await c.getByRole('heading', { name: 'Day' }).waitFor()
+  assert.equal(await c.locator('input[type="date"]').inputValue(), `${month}-${sale.sale_date.slice(8)}`)
+  await c.getByRole('button', { name: 'Back' }).click()
+  await c.getByText('Cash in this month').waitFor()
+  ok('Monthly report opens; tapping a day opens that day; back returns to the report')
+
+  await tab(c, 'Settings')
+  await c.getByRole('button', { name: 'Sign out' }).click()
+  const dialog = c.getByRole('dialog', { name: 'Sign out?' })
+  await dialog.waitFor()
+  await dialog.getByRole('button', { name: 'No, stay' }).click()
+  assert.equal(await c.getByRole('dialog').count(), 0)
+  await c.getByRole('heading', { name: 'Settings' }).waitFor()            // still signed in
+  server.state.offline = true                                             // signing out with no internet: warned, still works
+  await c.locator('section', { hasText: 'Waiting to sync' }).getByRole('button', { name: /Sync now/ }).click()
+  await c.locator('section', { hasText: 'Waiting to sync' }).getByText('Offline', { exact: true }).waitFor()
+  await c.getByRole('button', { name: 'Sign out' }).click()
+  assert.match(await c.getByRole('dialog').innerText(), /You are offline/)
+  await c.getByRole('button', { name: 'Yes, sign out' }).click()
+  await c.getByPlaceholder('Email').waitFor()
+  server.state.offline = false
+  ok('Sign out asks Yes/No; "No" keeps you in; offline it warns, and "Yes" signs out even with no internet')
 
   assert.deepEqual(pageErrors, [], `browser errors: ${pageErrors.join(' | ')}`)
   ok('no errors in the browser console')

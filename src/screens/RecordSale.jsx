@@ -194,7 +194,8 @@ export default function RecordSale({ editSaleId = null, onDoneEditing = () => {}
 
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold">{editing ? 'Edit sale' : 'Record sale'}</h1>
+      {/* when editing, the page header already says "Edit sale" */}
+      {!editing && <h1 className="text-lg font-semibold">Record sale</h1>}
       {editing && (
         <div className="flex items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
           <span>

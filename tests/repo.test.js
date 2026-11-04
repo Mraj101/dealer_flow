@@ -341,3 +341,57 @@ test('saleItemsByDate lines know their sale, so a day can count how many shops b
   assert.ok(lines.every((l) => shopOfSale[l.sale_id]))
   assert.equal(new Set(lines.map((l) => shopOfSale[l.sale_id])).size, 3) // 3 shops, not 1 (and not 4 sales)
 })
+
+test('monthReport adds up a month the same way the Day screen does', async () => {
+  const { repo } = await openTestDb()
+  const ids = await seedScenario(repo) // sales on 19 and 20 Oct, 100 collected later on 21 Oct, delivery on 20 Oct
+  const m = repo.monthReport('2026-10')
+  const round = (v) => Math.round(v * 100) / 100
+  const t = m.totals
+  assert.deepEqual(
+    [t.sales, t.shops, t.billed, t.collected, t.dues_in, t.driver_in, t.cash_in, round(t.cost), round(t.profit), t.due, t.still_due],
+    [2, 2, 900, 700, 100, 20, 820, 1246.4, -346.4, 200, 100])
+  // one row per day that had sales or cash coming in
+  assert.deepEqual(m.days.map((d) => [d.date, d.sales, d.billed, d.collected, d.dues_in, d.driver_in]), [
+    ['2026-10-19', 1, 400, 200, 0, 0],
+    ['2026-10-20', 1, 500, 500, 0, 20],
+    ['2026-10-21', 0, 0, 0, 100, 0],
+  ])
+  // the day totals match the Day screen exactly
+  for (const d of ['2026-10-19', '2026-10-20']) {
+    const day = repo.salesSummaryByDate(d)
+    const row = m.days.find((x) => x.date === d)
+    assert.equal(round(row.profit), round(day.reduce((s, r) => s + r.profit, 0)))
+  }
+  assert.deepEqual(m.shops.map((s) => [s.name, s.sales, s.billed, s.still_due]), [['Tista', 1, 500, 0], ['Alauddin', 1, 400, 100]])
+  assert.deepEqual(m.products.map((p) => [p.product_id, p.qty_pieces, p.shops]), [[ids.choco, 60, 1], [ids.cola, 24, 1], [ids.malai, 48, 1]])
+  assert.deepEqual(m.stock, { goods_received: 5000, paid_to_company: 10000 })
+  // another month is empty; deleted sales are left out
+  assert.equal(repo.monthReport('2026-11').totals.sales, 0)
+  const [s19] = repo.salesSummaryByDate('2026-10-19')
+  await repo.deleteSale(s19.id)
+  assert.equal(repo.monthReport('2026-10').totals.billed, 500)
+})
+
+test('dayDues lists only the sales of that day that created a due, with what happened to each', async () => {
+  const { repo } = await openTestDb()
+  const p = await repo.saveProduct({ name: 'x', pieces_per_carton: 10, unit_buy_price: 5 })
+  const a = await repo.addShop({ name: 'A', area: 'North' })
+  const b = await repo.addShop({ name: 'B' })
+  const item = [{ productId: p, qtyPieces: 10, unitSellPrice: null }]
+  await repo.createSale({ shopId: a, saleDate: '2026-11-01', billAmount: 500, paidAmount: 0, items: item })   // older due 500
+  await repo.createSale({ shopId: a, saleDate: '2026-11-03', billAmount: 300, paidAmount: 100, items: item }) // due 200
+  await repo.createSale({ shopId: b, saleDate: '2026-11-03', billAmount: 400, paidAmount: 400, items: item }) // paid, no due
+  await repo.createSale({ shopId: b, saleDate: '2026-11-03', billAmount: 250, paidAmount: 50, items: item })  // due 200
+  await repo.createPayment({ shopId: a, amount: 600, payDate: '2026-11-04' }) // clears A's older 500 first, then 100 of the 3 Nov due
+
+  const rows = repo.dayDues('2026-11-03')
+  assert.deepEqual(rows.map((r) => [r.shop.name, r.total, r.paid_amount, r.due, r.paid_later, r.still_due]),
+    [['A', 300, 100, 200, 100, 100], ['B', 250, 50, 200, 0, 200]])
+  assert.deepEqual(rows[0].shop.balance, 100)          // A owes 100 in total now
+  assert.deepEqual(rows[0].last_payment, { date: '2026-11-04', amount: 600 })
+  assert.equal(rows[1].last_payment, null)
+  assert.equal(rows[0].items[0].name, 'x')
+  assert.equal(rows[0].shop.area, 'North')
+  assert.deepEqual(repo.dayDues('2026-11-02'), [])
+})
