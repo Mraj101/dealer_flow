@@ -38,7 +38,7 @@ export default function SearchSelect({ options, value, onChange, placeholder, di
         <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border bg-white shadow-lg">
           {shown.length === 0 && !canCreate && <li className="p-3 text-gray-500">No match</li>}
           {canCreate && (
-            <li
+            <li data-haptic
               onMouseDown={(e) => { e.preventDefault(); setQuery(''); setOpen(false); onCreate(typed) }}
               className="cursor-pointer border-b p-3 font-medium text-blue-600 hover:bg-blue-50"
             >
@@ -46,7 +46,7 @@ export default function SearchSelect({ options, value, onChange, placeholder, di
             </li>
           )}
           {shown.map((o) => (
-            <li
+            <li data-haptic
               key={o.value}
               // mousedown (not click) so it fires before the input's blur closes the list
               onMouseDown={(e) => { e.preventDefault(); pick(o) }}

@@ -96,6 +96,10 @@ export default function DayDues({ date, nav }) {
                     )}
                   </div>
 
+                  <button type="button" onClick={() => nav.go('shop', { shopId: r.shop_id })}
+                    className="w-full rounded-lg border py-2 text-sm font-medium text-gray-700 active:bg-gray-50">
+                    Full history of {r.shop.name}
+                  </button>
                   {r.shop.balance > 0 && (
                     <button type="button" onClick={() => nav.go('dues', { openShopId: r.shop_id })}
                       className="w-full rounded-lg border border-blue-200 py-2 text-sm font-medium text-blue-700 active:bg-blue-50">

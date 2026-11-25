@@ -26,8 +26,13 @@ const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome'
 const pageErrors = []
 
 async function newPhone() {
-  const context = await browser.newContext({ viewport: { width: 420, height: 900 } })
+  const context = await browser.newContext({ viewport: { width: 420, height: 900 }, hasTouch: true, isMobile: true })
   await context.route(`${FAKE_URL}/**`, (route) => server.handle(route))
+  // record every phone vibration the app asks for (in a browser the app uses navigator.vibrate)
+  await context.addInitScript(() => {
+    window.__buzz = []
+    navigator.vibrate = (p) => { window.__buzz.push(JSON.stringify(p)); return true }
+  })
   const page = await context.newPage()
   page.on('pageerror', (e) => pageErrors.push(e.message))
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|net::ERR/.test(m.text())) pageErrors.push(m.text()) })
@@ -35,6 +40,14 @@ async function newPhone() {
 }
 // Home, Day, Sale, Dues and More are in the bottom bar; everything else is a tile on the More page
 const BAR = ['Home', 'Day', 'Sale', 'Dues', 'More']
+// every save now asks "are you sure?": press its Yes button
+const confirmYes = async (page) => {
+  const dialog = page.getByRole('dialog')
+  await dialog.waitFor()
+  await dialog.getByRole('button', { name: /^Yes/ }).click()
+  await dialog.waitFor({ state: 'detached' })
+}
+
 const tab = async (page, name) => {
   if (BAR.includes(name)) return page.locator('nav button', { hasText: new RegExp(`^${name}$`) }).click()
   await page.locator('nav button', { hasText: /^More$/ }).click()
@@ -65,12 +78,14 @@ try {
     await a.getByPlaceholder('Buy price (1 piece)').fill(buy)
     await a.getByPlaceholder('MRP (optional)').fill(mrp)
     await a.getByRole('button', { name: 'Save product' }).click()
+    await confirmYes(a)
     await a.getByText('Product added').waitFor()
   }
   await tab(a, 'Shops')
   await a.getByPlaceholder('Shop name').fill('Alauddin')
   await a.getByPlaceholder('Area (optional)').fill('nobigonj')
   await a.getByRole('button', { name: 'Save shop' }).click()
+  await confirmYes(a)
   await a.getByText('Shop added').waitFor()
   await waitSync(a, /All synced/)
   assert.equal(server.tables.products.size, 2)
@@ -83,6 +98,7 @@ try {
   // ---------- go offline, record a sale ----------
   server.state.offline = true
   await tab(a, 'Sale')
+  await a.evaluate(() => { window.__buzz = [] })
   await a.getByPlaceholder('Search shop').click()
   await a.getByText('Alauddin (nobigonj)').click()
   await a.getByPlaceholder('Search product').click()
@@ -90,8 +106,32 @@ try {
   await a.getByPlaceholder('Cartons').fill('1')
   await a.locator('input[inputmode="decimal"]').nth(1).fill('600') // bill amount
   await a.locator('input[inputmode="decimal"]').nth(2).fill('400') // money collected
-  await a.getByRole('button', { name: 'Save sale' }).click()
+  // a real finger tap (touch, not mouse) on Save sale must buzz too
+  await a.evaluate(() => { window.__tapBuzz = window.__buzz.length })
+  await a.getByRole('button', { name: 'Save sale' }).tap()
+  await a.getByRole('dialog').waitFor()
+  const afterTap = await a.evaluate(() => window.__buzz.slice(window.__tapBuzz))
+  console.log('   finger tap on Save sale ->', afterTap)
+  assert.ok(afterTap.includes('35'), `finger tap on Save sale did not buzz: ${afterTap}`)
+  await confirmYes(a)
   await a.getByText('Saved. Due: 200.00').waitFor()
+  {
+    const buzz = await a.evaluate(() => window.__buzz)
+    const has = (pattern, what) => assert.ok(buzz.includes(pattern), `no ${what} vibration on the Sale screen: ${buzz}`)
+    has('35', 'tap (dropdown pick / buttons)')
+    has('20', 'typing')
+    has('[40,60,40]', '"are you sure?" popup')
+    has('[30,50,30]', 'saved')
+    assert.ok(buzz.indexOf('[40,60,40]') < buzz.lastIndexOf('[30,50,30]'), 'popup buzz comes before the saved buzz')
+  }
+  {
+    // finger tap on the big round Sale button in the bottom bar
+    await a.evaluate(() => { window.__buzz = [] })
+    await a.locator('nav button', { hasText: /^Sale$/ }).tap()
+    const barBuzz = await a.evaluate(() => window.__buzz)
+    console.log('   finger tap on bottom-bar Sale ->', barBuzz)
+    assert.ok(barBuzz.includes('35'), `finger tap on bottom-bar Sale did not buzz: ${barBuzz}`)
+  }
   await waitSync(a, /Offline · 1 waiting/)
   ok('offline: sale saved on the phone, bar says "Offline · 1 waiting to sync"')
 
@@ -124,7 +164,30 @@ try {
   await a.getByRole('button', { name: 'Collect' }).click()
   assert.match(await a.locator('body').innerText(), /Unpaid sales, oldest first[\s\S]*today\s*200\.00/)
   await a.getByRole('button', { name: 'Close' }).click()
-  ok('offline: Dues shows Alauddin owing 200.00')
+  // search: by area finds the shop, nonsense finds nothing, × clears it
+  await a.getByLabel('Search shops').fill('NOBI')
+  await a.getByText('1 of 1 shops').waitFor()
+  await a.getByLabel('Search shops').fill('zzz')
+  await a.getByText('No shop with dues matches “zzz”').waitFor()
+  await a.getByRole('button', { name: 'Clear search' }).click()
+  await a.getByRole('button', { name: 'Collect' }).waitFor()
+  // shop history: the sale, what is still due, what the shop owes now
+  if (process.env.E2E_SHOTS) await a.screenshot({ path: `${process.env.E2E_SHOTS}/dues.png`, fullPage: true })
+  await a.getByRole('button', { name: 'Collect' }).click()
+  await a.getByRole('button', { name: /^Full due/ }).click()
+  if (process.env.E2E_SHOTS) await a.screenshot({ path: `${process.env.E2E_SHOTS}/dues-collect.png`, fullPage: true })
+  await a.getByRole('button', { name: 'Close' }).click()
+  await a.getByRole('button', { name: 'History of Alauddin' }).click()
+  await a.getByRole('heading', { name: 'Shop history' }).waitFor()
+  const hist = await a.locator('main').innerText()
+  assert.match(hist, /Owes you now\s*200\.00/)
+  assert.match(hist, /SALE\s*Bill 600\.00/)
+  assert.match(hist, /Unpaid 200\.00/)
+  await a.getByText('Bill 600.00').click() // open the sale card
+  assert.match(await a.locator('main').innerText(), /Collected at the sale\s*400\.00[\s\S]*Left as due\s*200\.00/)
+  await a.getByRole('button', { name: 'Back' }).click()
+  await a.getByRole('button', { name: 'Collect' }).waitFor()
+  ok('offline: Dues shows Alauddin owing 200.00; shop search filters the list; shop history opens')
 
   // ---------- reconnect ----------
   server.state.offline = false
@@ -150,10 +213,19 @@ try {
   await a.getByRole('button', { name: 'Collect' }).click()
   await a.getByPlaceholder('Amount received').fill('200')
   await a.getByRole('button', { name: 'Save payment' }).click()
+  await confirmYes(a)
   await a.getByText('No shop owes you anything').waitFor()
   await waitSync(a, /All synced/)
   assert.equal(server.tables.payments.size, 1)
-  ok('collected the due; shop disappears from Dues; payment synced')
+  // history now shows the collection paying off that sale
+  await tab(a, 'Shops')
+  await a.getByRole('button', { name: /Alauddin/ }).click()
+  const hist2 = await a.locator('main').innerText()
+  assert.match(hist2, /COLLECTED\s*200\.00/)
+  assert.match(hist2, /Paid off: .* sale 200\.00/)
+  assert.match(hist2, /Paid later ✓/)
+  assert.match(hist2, /Owes now\s*Nothing ✓/)
+  ok('collected the due; shop disappears from Dues; payment synced; history shows it cleared the sale')
 
   // ---------- receive stock, check stock numbers ----------
   await tab(a, 'Receive goods')
@@ -162,6 +234,7 @@ try {
   await a.getByPlaceholder('Cartons').first().fill('10')
   await a.getByPlaceholder('Cartons').nth(1).fill('9') // one carton short
   await a.getByRole('button', { name: 'Save delivery' }).click()
+  await confirmYes(a)
   await a.getByText('Delivery saved, stock updated').waitFor()
   await tab(a, 'In stock')
   assert.match(await a.locator('li', { hasText: 'cola' }).first().innerText(), /8 ctn/) // 9 cartons - 1 sold carton
@@ -240,6 +313,7 @@ try {
   assert.equal(await a.getByLabel('New shop name').inputValue(), 'Karim Store')
   await a.getByPlaceholder('Area (optional)').fill('Bandar')
   await a.getByRole('button', { name: 'Save shop' }).click()
+  await confirmYes(a)
   await a.waitForFunction(() => // saving is async: wait until the new shop is selected for this sale
     document.querySelector('input[placeholder="Search shop"]').value === 'Karim Store (Bandar)')
   await waitSync(a, /All synced/)
@@ -254,6 +328,7 @@ try {
   await a.getByText(/\+ Add new shop/).click()
   await a.getByPlaceholder('Area (optional)').fill('bandar')
   await a.getByRole('button', { name: 'Save shop' }).click()
+  await confirmYes(a)
   await a.getByText('This shop already exists in this area').waitFor()
   await a.getByRole('button', { name: 'Cancel' }).click()
   ok('add a shop from the Sale search: name pre-filled, selected for the sale, synced; duplicates refused')
@@ -269,19 +344,20 @@ try {
   assert.equal(await a.locator('#paid').inputValue(), '400')
   await a.locator('#bill').fill('650')
   await a.getByRole('button', { name: 'Save changes' }).click()
+  await confirmYes(a)
   await a.getByRole('button', { name: /Alauddin/ }).waitFor() // back on the Day screen
   assert.match(await a.locator('li', { hasText: 'Alauddin' }).innerText(), /650\.00/)
   await waitSync(a, /Offline · 1 waiting/)
   assert.equal([...server.tables.sales.values()][0].bill_amount, '600') // server not told yet
   ok('offline edit: opens filled in, saves on the phone (bill 600 -> 650), waits to sync')
 
-  const dialogs = []
-  a.once('dialog', (d) => { dialogs.push(d.message()); d.accept() })
   await a.getByRole('button', { name: /Alauddin/ }).click()
   await a.getByRole('button', { name: 'Delete sale' }).click()
+  const askText = await a.getByRole('dialog', { name: 'Delete this sale?' }).innerText()
+  assert.match(askText, /already paid 200\.00/)
+  assert.match(askText, /200\.00 credit/)
+  await confirmYes(a)
   await a.getByText('No sales on this day').waitFor()
-  assert.match(dialogs[0], /already paid 200\.00/)
-  assert.match(dialogs[0], /200\.00 credit/)
   await waitSync(a, /Offline · 1 waiting/)
   assert.ok(![...server.tables.sales.values()][0].deleted_at) // server not told yet
 

@@ -395,3 +395,36 @@ test('dayDues lists only the sales of that day that created a due, with what hap
   assert.equal(rows[0].shop.area, 'North')
   assert.deepEqual(repo.dayDues('2026-11-02'), [])
 })
+
+test('shopHistory: timeline, running balance, collections matched to the oldest dues', async () => {
+  const { repo } = await openTestDb()
+  const ids = await seedScenario(repo) // Alauddin: sale 19 Oct (due 200), collected 100 on 21 Oct
+  await repo.createSale({ shopId: ids.alauddin, saleDate: '2026-10-22', billAmount: 300, paidAmount: 0,
+    items: [{ productId: ids.cola, qtyPieces: 24, unitSellPrice: 12.5 }] })
+  await repo.createPayment({ shopId: ids.alauddin, amount: 250, payDate: '2026-10-25' })
+
+  const h = repo.shopHistory(ids.alauddin)
+  assert.equal(h.shop.name, 'Alauddin')
+  assert.deepEqual(h.events.map((e) => [e.kind, e.date, e.balance]), [
+    ['sale', '2026-10-19', 200],
+    ['payment', '2026-10-21', 100],
+    ['sale', '2026-10-22', 400],
+    ['payment', '2026-10-25', 150],
+  ])
+  assert.equal(h.balance, 150) // the last running balance is what the shop owes now
+
+  const [s1, p1, s2, p2] = h.events
+  // 250 collected on 25 Oct: the rest of the 19 Oct sale first (100), then 150 of the 22 Oct sale
+  assert.deepEqual(p2.cleared.map((c) => [c.sale_date, c.amount]), [['2026-10-19', 100], ['2026-10-22', 150]])
+  assert.equal(p2.credit, 0)
+  assert.deepEqual(s1.paid_by.map((x) => [x.pay_date, x.amount]), [['2026-10-21', 100], ['2026-10-25', 100]])
+  assert.equal(s1.still_due, 0)
+  assert.equal(s2.still_due, 150)
+  assert.equal(p1.amount, 100)
+  assert.deepEqual(s2.items.map((i) => [i.name, i.qty_pieces, i.sold_for]), [['cola', 24, 300]])
+
+  // agrees with the Day screen / Dues screen maths
+  const byDate = repo.salesSummaryByDate('2026-10-22')
+  assert.equal(byDate[0].still_due, s2.still_due)
+  assert.equal(repo.duesList()[0].balance, h.balance)
+})

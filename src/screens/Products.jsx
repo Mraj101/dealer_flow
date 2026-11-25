@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { repo } from '../local'
+import { ConfirmDialog, Summary } from '../components/ui'
+import { haptic } from '../lib/haptics'
 
 const empty = { name: '', perCarton: '', buyPrice: '', mrp: '' }
 
@@ -9,35 +11,52 @@ export default function Products() {
   const [msg, setMsg] = useState(null)
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState(null)
+  const [confirming, setConfirming] = useState(false) // save question open
+  const [deleting, setDeleting] = useState(null) // product whose delete question is open
 
   const load = () => setProducts(repo.listProducts())
   useEffect(() => { load() }, [])
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }))
 
-  const save = async (e) => {
+  const problem = () => {
+    if (!form.name.trim()) return 'Enter a product name'
+    if (!(Number(form.perCarton) > 0)) return 'Pieces per carton must be above 0'
+    if (form.buyPrice === '' || Number(form.buyPrice) < 0) return 'Enter the buy price per piece'
+    if (form.mrp !== '' && Number(form.mrp) < 0) return 'MRP cannot be negative'
+    return null
+  }
+
+  // check the form, then ask "are you sure?" before saving
+  const askSave = (e) => {
     e.preventDefault()
-    const name = form.name.trim()
-    const perCarton = Number(form.perCarton)
-    const buyPrice = Number(form.buyPrice)
-    if (!name) return setMsg({ type: 'err', text: 'Enter a product name' })
-    if (!(perCarton > 0)) return setMsg({ type: 'err', text: 'Pieces per carton must be above 0' })
-    if (form.buyPrice === '' || buyPrice < 0) return setMsg({ type: 'err', text: 'Enter the buy price per piece' })
-    if (form.mrp !== '' && Number(form.mrp) < 0) return setMsg({ type: 'err', text: 'MRP cannot be negative' })
+    const err = problem()
+    if (err) {
+      haptic.error()
+      return setMsg({ type: 'err', text: err })
+    }
+    setMsg(null)
+    setConfirming(true)
+  }
+
+  const save = async () => {
+    setConfirming(false)
     setSaving(true)
     try {
       await repo.saveProduct({
         id: editingId,
-        name,
-        pieces_per_carton: perCarton,
+        name: form.name.trim(),
+        pieces_per_carton: Number(form.perCarton),
         unit_buy_price: form.buyPrice,
         unit_mrp: form.mrp === '' ? null : form.mrp,
       })
     } catch (error) {
       setSaving(false)
+      haptic.error()
       return setMsg({ type: 'err', text: error.message })
     }
     setSaving(false)
+    haptic.success()
     setMsg({ type: 'ok', text: editingId ? 'Product updated' : 'Product added' })
     cancelEdit()
     load()
@@ -62,12 +81,14 @@ export default function Products() {
 
   // soft delete: past sales keep their copied buy price
   const remove = async (p) => {
-    if (!window.confirm(`Delete "${p.name}"? Past sales are not affected.`)) return
+    setDeleting(null)
     try {
       await repo.deleteProduct(p.id)
     } catch (error) {
+      haptic.error()
       return setMsg({ type: 'err', text: error.message })
     }
+    haptic.success()
     if (editingId === p.id) cancelEdit()
     setMsg({ type: 'ok', text: 'Product deleted' })
     load()
@@ -77,7 +98,7 @@ export default function Products() {
 
   return (
     <div className="space-y-4">
-      <form onSubmit={save} className="space-y-3">
+      <form onSubmit={askSave} className="space-y-3">
         <input value={form.name} onChange={(e) => set({ name: e.target.value })}
           placeholder="Product name" className={input} />
         <input inputMode="numeric" value={form.perCarton}
@@ -105,6 +126,41 @@ export default function Products() {
       {msg && (
         <p className={msg.type === 'ok' ? 'text-green-700' : 'text-red-600'}>{msg.text}</p>
       )}
+      {confirming && (() => {
+        const per = Number(form.perCarton)
+        const buy = Number(form.buyPrice)
+        const old = editingId && products.find((x) => x.id === editingId)
+        return (
+          <ConfirmDialog title={editingId ? 'Update this product?' : 'Add this product?'}
+            yesLabel={editingId ? 'Yes, update' : 'Yes, add product'} noLabel="No, go back"
+            onNo={() => setConfirming(false)} onYes={save}>
+            <Summary rows={[
+              ['Product name', form.name.trim()],
+              ['Pieces per carton', per],
+              ['Buy price (1 piece)', buy.toFixed(2)],
+              ['Buy price (1 carton)', (per * buy).toFixed(2)],
+              ['MRP', form.mrp === '' ? '—' : Number(form.mrp).toFixed(2)],
+            ]} />
+            {old && Number(old.unit_buy_price) !== buy && (
+              <p className="rounded-lg bg-amber-50 p-2 text-amber-900">
+                Buy price changes from {Number(old.unit_buy_price)} to {buy}. Past sales keep their old price.
+              </p>
+            )}
+            <p>Are you sure these details are correct?</p>
+          </ConfirmDialog>
+        )
+      })()}
+      {deleting && (
+        <ConfirmDialog title="Delete this product?" danger yesLabel="Yes, delete" noLabel="No, keep it"
+          onNo={() => setDeleting(null)} onYes={() => remove(deleting)}>
+          <Summary rows={[
+            ['Product', deleting.name],
+            ['Pieces per carton', deleting.pieces_per_carton],
+            ['Buy price (1 piece)', Number(deleting.unit_buy_price)],
+          ]} />
+          <p>Past sales are not affected. Are you sure?</p>
+        </ConfirmDialog>
+      )}
       <ul className="divide-y rounded-lg border bg-white">
         {products.map((p) => (
           <li key={p.id} className="flex items-center justify-between gap-2 p-3">
@@ -117,7 +173,7 @@ export default function Products() {
             </div>
             <div className="flex shrink-0 gap-3 text-sm">
               <button onClick={() => startEdit(p)} className="text-blue-600">Edit</button>
-              <button onClick={() => remove(p)} className="text-red-600">Delete</button>
+              <button onClick={() => setDeleting(p)} className="text-red-600">Delete</button>
             </div>
           </li>
         ))}

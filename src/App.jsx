@@ -19,6 +19,7 @@ import CompanyPayments from './screens/stock/CompanyPayments'
 import MonthlyReport from './screens/MonthlyReport'
 import DayDues from './screens/DayDues'
 import Settings from './screens/Settings'
+import ShopHistory from './screens/ShopHistory'
 
 // Every page in the app. `bar` = which bottom-bar button is lit while it is open.
 // To add a module: add a page here and a tile on the More screen.
@@ -36,6 +37,7 @@ const PAGES = {
   products: { title: 'Products', Screen: Products, bar: 'more' },
   report: { title: 'Monthly report', Screen: MonthlyReport, bar: 'more' },
   settings: { title: 'Settings', Screen: Settings, bar: 'more' },
+  shop: { title: 'Shop history', Screen: ShopHistory, bar: 'more' },
 }
 
 // The signed-in user's id is remembered on the phone so the app can open with no internet.

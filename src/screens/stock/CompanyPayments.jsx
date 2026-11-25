@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import { repo } from '../../local'
+import { ConfirmDialog, Summary } from '../../components/ui'
+import { fmtDate } from '../../lib/format'
+import { haptic } from '../../lib/haptics'
 
 const todayDhaka = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -14,6 +17,7 @@ export default function CompanyPayments() {
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
+  const [confirming, setConfirming] = useState(false)
 
   const load = () => {
     setBal(repo.companyBalance())
@@ -21,18 +25,30 @@ export default function CompanyPayments() {
   }
   useEffect(() => { load() }, [])
 
-  const save = async (e) => {
+  // check the form, then ask "are you sure?" before saving
+  const askSave = (e) => {
     e.preventDefault()
+    if (!(Number(amount) > 0)) {
+      haptic.error()
+      return setMsg({ type: 'err', text: 'Enter an amount above 0' })
+    }
+    setMsg(null)
+    setConfirming(true)
+  }
+
+  const save = async () => {
+    setConfirming(false)
     const n = Number(amount)
-    if (!(n > 0)) return setMsg({ type: 'err', text: 'Enter an amount above 0' })
     setSaving(true)
     try {
       await repo.createCompanyPayment({ amount: n, note, payDate: date })
     } catch (error) {
       setSaving(false)
+      haptic.error()
       return setMsg({ type: 'err', text: error.message })
     }
     setSaving(false)
+    haptic.success()
     setAmount('')
     setNote('')
     setMsg({ type: 'ok', text: 'Payment saved' })
@@ -53,7 +69,7 @@ export default function CompanyPayments() {
         </div>
       </div>
 
-      <form onSubmit={save} className="space-y-3">
+      <form onSubmit={askSave} className="space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={input} />
           <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)}
@@ -66,6 +82,22 @@ export default function CompanyPayments() {
           {saving ? 'Saving…' : 'Save payment to company'}
         </button>
       </form>
+      {confirming && (() => {
+        const after = balance + Number(amount)
+        return (
+          <ConfirmDialog title="Save this payment to company?" yesLabel="Yes, save payment" noLabel="No, go back"
+            onNo={() => setConfirming(false)} onYes={save}>
+            <Summary rows={[
+              ['Date', fmtDate(date)],
+              ['Amount paid', fmt(amount)],
+              ['Note', note.trim() || '—'],
+              [after < 0 ? 'You will still owe' : 'Advance after this', fmt(Math.abs(after)),
+                after < 0 ? 'text-red-600' : 'text-green-700'],
+            ]} />
+            <p>Are you sure these details are correct?</p>
+          </ConfirmDialog>
+        )
+      })()}
       {msg && <p className={msg.type === 'ok' ? 'text-green-700' : 'text-red-600'}>{msg.text}</p>}
 
       {list.length > 0 && (

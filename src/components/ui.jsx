@@ -1,4 +1,20 @@
 // Small shared building blocks for every screen.
+import { useEffect } from 'react'
+import { haptic } from '../lib/haptics'
+
+// "What you entered" list for a confirm dialog. rows: [[label, value, className?]]; empty values are skipped.
+export function Summary({ rows }) {
+  return (
+    <dl className="divide-y rounded-lg border bg-gray-50">
+      {rows.filter(([, v]) => v !== '' && v != null && v !== false).map(([label, value, cls = 'text-gray-900']) => (
+        <div key={label} className="flex justify-between gap-3 px-3 py-2">
+          <dt className="text-gray-500">{label}</dt>
+          <dd className={`text-right font-medium tabular-nums ${cls}`}>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
 
 // Simple line icons (24x24, drawn with the current text colour).
 const ICONS = {
@@ -19,6 +35,9 @@ const ICONS = {
   signout: 'M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10',
   sync: 'M20 11a8 8 0 00-14.9-3M4 13a8 8 0 0014.9 3M5 4v4h4M19 20v-4h-4',
   alert: 'M12 9v4M12 17h.01M10.3 3.9L2 18a2 2 0 001.7 3h16.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z',
+  phone: 'M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8 9.8a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z',
+  history: 'M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8M3 3v5h5M12 7v5l3 3',
+  cash: 'M2 6h20v12H2zM12 15a3 3 0 100-6 3 3 0 000 6zM6 12h.01M18 12h.01',
 }
 
 export function Icon({ name, className = 'h-5 w-5' }) {
@@ -30,12 +49,14 @@ export function Icon({ name, className = 'h-5 w-5' }) {
   )
 }
 
-// A Yes / No question on top of the screen.
+// A Yes / No question on top of the screen. The phone buzzes once when it opens.
 export function ConfirmDialog({ title, children, yesLabel = 'Yes', noLabel = 'No', danger = false, onYes, onNo }) {
+  useEffect(() => { haptic.warn() }, [])
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
       role="dialog" aria-modal="true" aria-label={title} onClick={onNo}>
-      <div className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[90vh] w-full max-w-sm space-y-3 overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-semibold">{title}</h2>
         <div className="space-y-2 text-sm text-gray-700">{children}</div>
         <div className="flex gap-2 pt-1">

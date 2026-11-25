@@ -430,6 +430,102 @@ export function createRepo(driver) {
       }))
     },
 
+    // Everything that ever happened with one shop, for the Shop history page.
+    // events: sales and collections, oldest first, each with the shop's running balance after it.
+    //   sale:    bill, paid at the sale, due, cost, profit, items, and paid_by = the collections
+    //            that cleared its due (oldest dues are cleared first, same rule as the Dues screen)
+    //   payment: amount, and cleared = the sales it paid off; anything left over is credit
+    // The last event's balance is what the shop owes now (negative = credit).
+    shopHistory(shopId) {
+      const shop = driver.get(
+        `select sh.id, sh.name, sh.area, sh.phone, sh.deleted_at, coalesce(b.balance, 0) as balance
+         from shops sh left join shop_balances b on b.shop_id = sh.id where sh.id = ?`, [shopId])
+      if (!shop) return null
+
+      const sales = driver.all(
+        `select ss.id, ss.sale_date, ss.paid_amount, ss.cost, ss.total, ss.due, ss.profit, s.created_at
+         from sales_summary ss join sales s on s.id = ss.id
+         where ss.shop_id = ? order by ss.sale_date, s.created_at, s.rowid`, [shopId])
+      const payments = driver.all(
+        `select id, pay_date, amount, created_at from payments
+         where shop_id = ? and deleted_at is null and status = 1
+         order by pay_date, created_at, rowid`, [shopId])
+      const itemRows = driver.all(
+        `select i.sale_id, coalesce(p.name, '(unknown product)') as name, p.pieces_per_carton,
+                i.qty_pieces, i.unit_sell_price, i.unit_buy_price
+         from sale_items i join sales s on s.id = i.sale_id left join products p on p.id = i.product_id
+         where s.shop_id = ? and s.deleted_at is null and s.cancelled_at is null and i.deleted_at is null
+         order by i.rowid`, [shopId])
+      const items = {}
+      for (const r of itemRows) {
+        ;(items[r.sale_id] ??= []).push({
+          name: r.name,
+          pieces_per_carton: r.pieces_per_carton,
+          qty_pieces: r.qty_pieces,
+          unit_sell_price: toNumber(r.unit_sell_price),
+          sold_for: r.unit_sell_price === null ? null : toNumber(r.qty_pieces * r.unit_sell_price),
+        })
+      }
+
+      // match collections to dues, oldest due first (raw units, like settleShopDues)
+      const open = sales.filter((s) => s.due > 0).map((s) => ({ id: s.id, left: s.due }))
+      const paidBy = {}
+      const cleared = {}
+      for (const p of payments) {
+        let left = p.amount
+        cleared[p.id] = []
+        for (const o of open) {
+          if (left <= 0) break
+          if (o.left <= 0) continue
+          const part = Math.min(o.left, left)
+          o.left -= part
+          left -= part
+          cleared[p.id].push({ sale_id: o.id, amount: part })
+          ;(paidBy[o.id] ??= []).push({ payment_id: p.id, pay_date: p.pay_date, amount: part })
+        }
+        cleared[p.id].credit = left
+      }
+      const saleDate = Object.fromEntries(sales.map((s) => [s.id, s.sale_date]))
+
+      // one timeline, in the order things happened, with the running balance
+      const events = [
+        ...sales.map((s) => ({ kind: 'sale', date: s.sale_date, at: s.created_at, s })),
+        ...payments.map((p) => ({ kind: 'payment', date: p.pay_date, at: p.created_at, p })),
+      ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
+
+      let bal = 0
+      const out = events.map((e) => {
+        if (e.kind === 'sale') {
+          const s = e.s
+          bal += s.due
+          const paid = (paidBy[s.id] || []).reduce((t, x) => t + x.amount, 0)
+          return {
+            kind: 'sale', id: s.id, date: s.sale_date, created_at: s.created_at,
+            bill: toNumber(s.total), paid_at_sale: toNumber(s.paid_amount), due: toNumber(s.due),
+            cost: toNumber(s.cost), profit: toNumber(s.profit),
+            paid_later: toNumber(paid), still_due: toNumber(Math.max(s.due, 0) - paid),
+            paid_by: (paidBy[s.id] || []).map((x) => ({ ...x, amount: toNumber(x.amount) })),
+            items: items[s.id] || [],
+            balance: toNumber(bal),
+          }
+        }
+        const p = e.p
+        bal -= p.amount
+        return {
+          kind: 'payment', id: p.id, date: p.pay_date, created_at: p.created_at, amount: toNumber(p.amount),
+          cleared: cleared[p.id].map((c) => ({ ...c, sale_date: saleDate[c.sale_id], amount: toNumber(c.amount) })),
+          credit: toNumber(cleared[p.id].credit),
+          balance: toNumber(bal),
+        }
+      })
+
+      return {
+        shop: { id: shop.id, name: shop.name, area: shop.area, phone: shop.phone, deleted: Boolean(shop.deleted_at) },
+        balance: toNumber(shop.balance),
+        events: out,
+      }
+    },
+
     // cash that came in on a date apart from the sales themselves
     dayCash(date) {
       const dues = driver.get(

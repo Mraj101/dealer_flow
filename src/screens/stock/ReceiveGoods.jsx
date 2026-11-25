@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { repo } from '../../local'
 import { fmtQty } from '../../lib/qty'
 import SearchSelect from '../../components/SearchSelect'
+import { ConfirmDialog, Summary } from '../../components/ui'
+import { fmtDate } from '../../lib/format'
+import { haptic } from '../../lib/haptics'
 
 const todayDhaka = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -24,6 +27,7 @@ export default function ReceiveGoods() {
   const [driverInput, setDriverInput] = useState(null) // null = follow shortage value
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
+  const [confirming, setConfirming] = useState(false)
 
   const loadRecent = () => setRecent(repo.recentReceipts(10))
 
@@ -71,9 +75,19 @@ export default function ReceiveGoods() {
     return null
   }
 
-  const save = async () => {
+  // check the form, then ask "are you sure?" before saving
+  const askSave = () => {
     const err = validate()
-    if (err) return setMsg({ type: 'err', text: err })
+    if (err) {
+      haptic.error()
+      return setMsg({ type: 'err', text: err })
+    }
+    setMsg(null)
+    setConfirming(true)
+  }
+
+  const save = async () => {
+    setConfirming(false)
     setSaving(true)
     try {
       await repo.createReceipt({
@@ -91,9 +105,11 @@ export default function ReceiveGoods() {
       })
     } catch (error) {
       setSaving(false)
+      haptic.error()
       return setMsg({ type: 'err', text: error.message })
     }
     setSaving(false)
+    haptic.success()
     setMsg({ type: 'ok', text: 'Delivery saved, stock updated' })
     setMemoNo('')
     setDriver('')
@@ -179,7 +195,44 @@ export default function ReceiveGoods() {
 
       {msg && <p className={msg.type === 'ok' ? 'text-green-700' : 'text-red-600'}>{msg.text}</p>}
 
-      <button onClick={save} disabled={saving}
+      {confirming && (
+        <ConfirmDialog title="Save this delivery?" yesLabel="Yes, save delivery" noLabel="No, go back"
+          onNo={() => setConfirming(false)} onYes={save}>
+          <Summary rows={[
+            ['Date', fmtDate(date)],
+            ['Memo no.', memoNo.trim() || '—'],
+            ['Driver', driver.trim() || '—'],
+          ]} />
+          <div className="divide-y rounded-lg border">
+            {lines.map((l) => {
+              const p = productById[l.productId]
+              const per = p?.pieces_per_carton
+              const short = memoQty(l) - recvQty(l)
+              return (
+                <div key={l.key} className="px-3 py-2">
+                  <div className="font-medium text-gray-900">{p?.name}</div>
+                  <div className="text-xs text-gray-500">
+                    Memo {fmtQty(memoQty(l), per)} · received {fmtQty(recvQty(l), per)}
+                  </div>
+                  {short !== 0 && (
+                    <div className={`text-xs ${short > 0 ? 'text-red-600' : 'text-amber-700'}`}>
+                      {short > 0 ? `Short ${fmtQty(short, per)}` : `Extra ${fmtQty(-short, per)}`}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          <Summary rows={[
+            ['Memo amount', fmt(toCents(memoText))],
+            ['Missing goods value', fmt(shortC), shortC > 0 ? 'text-red-600' : 'text-gray-900'],
+            ['Taken from driver', fmt(toCents(driverText))],
+          ]} />
+          <p>Stock will go up by the received amounts. Are you sure everything is correct?</p>
+        </ConfirmDialog>
+      )}
+
+      <button onClick={askSave} disabled={saving}
         className="w-full rounded-lg bg-blue-600 p-4 font-medium text-white disabled:opacity-50">
         {saving ? 'Saving…' : 'Save delivery'}
       </button>

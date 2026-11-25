@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { repo } from '../local'
 import SearchSelect from '../components/SearchSelect'
 import { fmtQty } from '../lib/qty'
+import { fmtDate } from '../lib/format'
+import { ConfirmDialog, Summary } from '../components/ui'
+import { haptic } from '../lib/haptics'
 
 const todayDhaka = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -58,14 +61,26 @@ export default function RecordSale({ editSaleId = null, onDoneEditing = () => {}
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
   const [newShop, setNewShop] = useState(null) // { name, area, phone, error } while adding a shop from here
+  const [confirming, setConfirming] = useState(null) // 'sale' | 'shop' while an "are you sure?" is open
+
+  const askNewShop = () => {
+    if (!newShop.name.trim()) {
+      haptic.error()
+      return setNewShop((n) => ({ ...n, error: 'Enter a shop name' }))
+    }
+    setConfirming('shop')
+  }
 
   const saveNewShop = async () => {
+    setConfirming(null)
     try {
       const id = await repo.addShop(newShop)
       setShops(repo.listShops())
       setShopId(id)
       setNewShop(null)
+      haptic.success()
     } catch (e) {
+      haptic.error()
       setNewShop((n) => ({ ...n, error: e.message }))
     }
   }
@@ -158,9 +173,19 @@ export default function RecordSale({ editSaleId = null, onDoneEditing = () => {}
     return null
   }
 
-  const save = async () => {
+  // check the form, then ask "are you sure?" before saving
+  const askSave = () => {
     const err = validate()
-    if (err) return setMsg({ type: 'err', text: err })
+    if (err) {
+      haptic.error()
+      return setMsg({ type: 'err', text: err })
+    }
+    setMsg(null)
+    setConfirming('sale')
+  }
+
+  const save = async () => {
+    setConfirming(null)
     setSaving(true)
     const sale = {
       shopId,
@@ -179,9 +204,11 @@ export default function RecordSale({ editSaleId = null, onDoneEditing = () => {}
       else await repo.createSale(sale)
     } catch (error) {
       setSaving(false)
+      haptic.error()
       return setMsg({ type: 'err', text: error.message })
     }
     setSaving(false)
+    haptic.success()
     if (editing) return onDoneEditing() // back to the Day screen
     setMsg({
       type: 'ok',
@@ -228,7 +255,7 @@ export default function RecordSale({ editSaleId = null, onDoneEditing = () => {}
             </div>
             {newShop.error && <p className="text-sm text-red-600">{newShop.error}</p>}
             <div className="flex gap-2">
-              <button type="button" onClick={saveNewShop}
+              <button type="button" onClick={askNewShop}
                 className="flex-1 rounded-lg bg-blue-600 py-2 font-medium text-white">Save shop</button>
               <button type="button" onClick={() => setNewShop(null)}
                 className="flex-1 rounded-lg border bg-white py-2 text-gray-600">Cancel</button>
@@ -344,7 +371,55 @@ export default function RecordSale({ editSaleId = null, onDoneEditing = () => {}
 
       {msg && <p className={msg.type === 'ok' ? 'text-green-700' : 'text-red-600'}>{msg.text}</p>}
 
-      <button onClick={save} disabled={saving}
+      {confirming === 'shop' && newShop && (
+        <ConfirmDialog title="Add this shop?" yesLabel="Yes, add shop" noLabel="No, go back"
+          onNo={() => setConfirming(null)} onYes={saveNewShop}>
+          <Summary rows={[
+            ['Shop name', newShop.name.trim()],
+            ['Area', newShop.area.trim() || '—'],
+            ['Phone', newShop.phone.trim() || '—'],
+          ]} />
+          <p>Are you sure these details are correct?</p>
+        </ConfirmDialog>
+      )}
+
+      {confirming === 'sale' && (
+        <ConfirmDialog title={editing ? 'Save changes to this sale?' : 'Save this sale?'}
+          yesLabel={editing ? 'Yes, save changes' : 'Yes, save sale'} noLabel="No, go back"
+          onNo={() => setConfirming(null)} onYes={save}>
+          <Summary rows={[
+            ['Shop', shopOptions.find((o) => String(o.value) === String(shopId))?.label],
+            ['Date', fmtDate(date)],
+          ]} />
+          <div className="divide-y rounded-lg border">
+            {lines.map((l) => {
+              const p = productById[l.productId]
+              const qty = qtyOf(l)
+              return (
+                <div key={l.key} className="px-3 py-2">
+                  <div className="flex justify-between gap-2 font-medium text-gray-900">
+                    <span>{p?.name}</span>
+                    <span className="tabular-nums">{l.price !== '' ? fmt(qty * toCents(l.price)) : 'no price'}</span>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {fmtQty(qty, p?.pieces_per_carton)}{qty >= (p?.pieces_per_carton || Infinity) ? ` (${qty} pcs)` : ''}
+                    {l.price !== '' && ` × ${Number(l.price)}/pc`}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <Summary rows={[
+            ['Bill amount', fmt(billC)],
+            ['Money collected now', fmt(paidC)],
+            ['Due (shop still owes)', fmt(dueC), dueC > 0 ? 'text-red-600' : 'text-gray-900'],
+            ['Profit', fmt(profitC), profitC < 0 ? 'text-red-600' : 'text-green-700'],
+          ]} />
+          <p>Are you sure everything is correct?</p>
+        </ConfirmDialog>
+      )}
+
+      <button onClick={askSave} disabled={saving}
         className="w-full rounded-lg bg-blue-600 p-4 font-medium text-white disabled:opacity-50">
         {saving ? 'Saving…' : editing ? 'Save changes' : 'Save sale'}
       </button>

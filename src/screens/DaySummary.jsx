@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { repo } from '../local'
 import { fmtQty } from '../lib/qty'
+import { ConfirmDialog, Summary } from '../components/ui'
+import { haptic } from '../lib/haptics'
 
 const todayDhaka = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -67,6 +69,8 @@ export default function DaySummary({ onEditSale = () => {}, initialDate = null, 
   const [openId, setOpenId] = useState(null) // the sale whose items are shown
   const [view, setView] = useState('shops') // shops | products
   const [shopQuery, setShopQuery] = useState('') // filters the shop cards by name or area
+  const [deleting, setDeleting] = useState(null) // { sale, impact } while the delete question is open
+  const [problem, setProblem] = useState(null)
 
   useEffect(() => {
     setShopById(Object.fromEntries(repo.listShops({ includeDeleted: true }).map((s) => [s.id, s])))
@@ -86,21 +90,17 @@ export default function DaySummary({ onEditSale = () => {}, initialDate = null, 
     setOpenId(null)
   }, [date])
 
+  const askDelete = (r) => { setProblem(null); setDeleting({ sale: r, impact: repo.deleteSaleImpact(r.id) }) }
+
   const deleteSale = async (r) => {
-    const impact = repo.deleteSaleImpact(r.id)
-    const lines = [`Delete this sale to ${shopName(r)} (bill ${fmt(r.total ?? r.paid_amount)})?`]
-    if (impact?.isOld) lines.push(`It is from ${impact.saleDate}, so that day's totals will change.`)
-    if (impact?.paidLater > 0) {
-      lines.push(`The shop already paid ${fmt(impact.paidLater)} of this sale's due later.` +
-        (impact.creditAfter > 0 ? ` After deleting, the shop will have ${fmt(impact.creditAfter)} credit.` : ''))
-    }
-    lines.push('Stock and dues adjust by themselves.')
-    if (!window.confirm(lines.join('\n\n'))) return
+    setDeleting(null)
     try {
       await repo.deleteSale(r.id)
     } catch (e) {
-      return window.alert(e.message)
+      haptic.error()
+      return setProblem(e.message)
     }
+    haptic.success()
     setOpenId(null)
     loadDay()
   }
@@ -135,6 +135,34 @@ export default function DaySummary({ onEditSale = () => {}, initialDate = null, 
 
   return (
     <div className="space-y-4">
+      {deleting && (() => {
+        const { sale: r, impact } = deleting
+        return (
+          <ConfirmDialog title="Delete this sale?" danger yesLabel="Yes, delete" noLabel="No, keep it"
+            onNo={() => setDeleting(null)} onYes={() => deleteSale(r)}>
+            <Summary rows={[
+              ['Shop', shopName(r)],
+              ['Date', impact?.saleDate ?? date],
+              ['Items', (itemsBySale[r.id] || []).length],
+              ['Bill', fmt(r.total ?? r.paid_amount)],
+              ['Collected', fmt(r.paid_amount)],
+            ]} />
+            {impact?.isOld && (
+              <p className="rounded-lg bg-amber-50 p-2 text-amber-900">
+                It is from {impact.saleDate}, so that day’s totals will change.
+              </p>
+            )}
+            {impact?.paidLater > 0 && (
+              <p className="rounded-lg bg-amber-50 p-2 text-amber-900">
+                The shop already paid {fmt(impact.paidLater)} of this sale’s due later.
+                {impact.creditAfter > 0 && ` After deleting, the shop will have ${fmt(impact.creditAfter)} credit.`}
+              </p>
+            )}
+            <p>Stock and dues adjust by themselves. Are you sure?</p>
+          </ConfirmDialog>
+        )
+      })()}
+      {problem && <p className="text-red-600">{problem}</p>}
       {/* ---------- date ---------- */}
       <div className="flex items-center gap-2">
         <button onClick={() => setDate(shiftDate(date, -1))} aria-label="Previous day"
@@ -299,12 +327,16 @@ export default function DaySummary({ onEditSale = () => {}, initialDate = null, 
                             className={r.profit < 0 ? 'text-red-600' : 'text-green-700'} />
                         </div>
 
-                        <div className="mt-3 flex gap-2">
+                        <button type="button" onClick={() => nav.go('shop', { shopId: r.shop_id })}
+                          className="mt-3 w-full rounded-lg border bg-white py-2 text-sm font-medium text-gray-700 active:bg-gray-50">
+                          {shopName(r)}: full history ›
+                        </button>
+                        <div className="mt-2 flex gap-2">
                           <button type="button" onClick={() => onEditSale(r.id)}
                             className="flex-1 rounded-lg border bg-white py-2 font-medium text-blue-700 active:bg-blue-50">
                             Edit sale
                           </button>
-                          <button type="button" onClick={() => deleteSale(r)}
+                          <button type="button" onClick={() => askDelete(r)}
                             className="flex-1 rounded-lg border border-red-200 bg-white py-2 font-medium text-red-600 active:bg-red-50">
                             Delete sale
                           </button>
